@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  USER
+  TEAM_MEMBER
+}
+
+model User {
+  id                  String               @id @default(auto()) @map("_id") @db.ObjectId
+  name                String
+  email               String               @unique
+  passwordHash        String?
+  googleId            String?
+  authProvider        String               @default("local")
+  role                Role                 @default(USER)
+  avatar              String?
+  isEmailVerified     Boolean              @default(false)
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  lastLoginAt         DateTime?
+  verificationTokens  VerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+  sessions            Session[]
+
+  @@index([role])
+  @@index([isActive])
+  @@map("users")
+}
+
+model VerificationToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model Session {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId    String   @db.ObjectId
+  token     String   @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
