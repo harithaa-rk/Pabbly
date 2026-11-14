@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { X, GitBranch, ArrowRight } from 'lucide-react';
+import { X, GitBranch, Loader2 } from 'lucide-react';
 import { useWorkflowStore } from '../../store/workflowStore';
 import { Button } from '../ui/Button';
 
@@ -16,30 +16,41 @@ export const CreateWorkflowModal: React.FC<CreateWorkflowModalProps> = ({
   onClose,
 }) => {
   const router = useRouter();
-  const { folders, activeFolder, createWorkflow } = useWorkflowStore();
+  const { createWorkflow } = useWorkflowStore();
   const [name, setName] = useState('');
-  const [selectedFolder, setSelectedFolder] = useState(
-    activeFolder === 'Trash' ? 'Home' : activeFolder
-  );
+  const [description, setDescription] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = name.trim();
-    if (!cleanName) return;
+    if (!cleanName) {
+      setError('Workflow name is required');
+      return;
+    }
 
-    const newWf = createWorkflow({
-      name: cleanName,
-      folder: selectedFolder,
-    });
+    setIsSubmitting(true);
+    setError(null);
 
-    setName('');
-    onClose();
-    router.push(`/workflows/${newWf.id}`);
+    try {
+      const newWf = await createWorkflow({
+        name: cleanName,
+        description: description.trim() || undefined,
+      });
+
+      setName('');
+      setDescription('');
+      onClose();
+      router.push(`/workflows/${newWf.id}`);
+    } catch (err: any) {
+      setError(err?.message || 'Failed to create workflow. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
-
-  const availableFolders = folders.filter((f) => f !== 'Trash');
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs animate-fadeIn">
@@ -57,7 +68,8 @@ export const CreateWorkflowModal: React.FC<CreateWorkflowModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="text-[#667085] hover:text-[#182033] p-1.5 rounded-lg hover:bg-[#FFF7F4]"
+            disabled={isSubmitting}
+            className="text-[#667085] hover:text-[#182033] p-1.5 rounded-lg hover:bg-[#FFF7F4] disabled:opacity-50"
           >
             <X className="w-4 h-4" />
           </button>
@@ -65,49 +77,65 @@ export const CreateWorkflowModal: React.FC<CreateWorkflowModalProps> = ({
 
         {/* Modal Body */}
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          {error && (
+            <div className="p-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg">
+              {error}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-semibold text-[#182033] mb-1.5">
-              Workflow Name
+              Workflow Name <span className="text-[#E85D8A]">*</span>
             </label>
             <input
               type="text"
               autoFocus
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (error) setError(null);
+              }}
               placeholder="e.g. Lead Capture to Google Sheets"
-              className="w-full px-3 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A]"
+              maxLength={100}
+              required
+              disabled={isSubmitting}
+              className="w-full px-3 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A] disabled:bg-slate-50"
             />
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-[#182033] mb-1.5">
-              Folder
+              Description <span className="text-xs font-normal text-[#98A2B3]">(Optional)</span>
             </label>
-            <select
-              value={selectedFolder}
-              onChange={(e) => setSelectedFolder(e.target.value)}
-              className="w-full px-3 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A]"
-            >
-              {availableFolders.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Brief summary of what this workflow accomplishes"
+              rows={3}
+              maxLength={500}
+              disabled={isSubmitting}
+              className="w-full px-3 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A] disabled:bg-slate-50 resize-none"
+            />
           </div>
 
           <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#E9E5E4]">
-            <Button type="button" variant="outline" size="sm" onClick={onClose}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+              disabled={isSubmitting}
+            >
               Cancel
             </Button>
             <Button
               type="submit"
               variant="primary"
               size="sm"
-              disabled={!name.trim()}
-              rightIcon={<ArrowRight className="w-3.5 h-3.5" />}
+              disabled={isSubmitting || !name.trim()}
+              leftIcon={isSubmitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : undefined}
             >
-              Create
+              {isSubmitting ? 'Creating...' : 'Create'}
             </Button>
           </div>
         </form>
@@ -115,4 +143,3 @@ export const CreateWorkflowModal: React.FC<CreateWorkflowModalProps> = ({
     </div>
   );
 };
-

@@ -1,133 +1,168 @@
 'use client';
 
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-
-export type WorkflowStatus = 'ACTIVE' | 'INACTIVE' | 'DRAFT';
-
-export interface WorkflowItem {
-  id: string;
-  name: string;
-  status: WorkflowStatus;
-  folder: string;
-  createdAt: string;
-  tasksConsumed: number;
-  apps: string[];
-  webhookUrl: string;
-}
+import {
+  Workflow,
+  WorkflowStatus,
+  CreateWorkflowInput,
+  UpdateWorkflowInput,
+} from '../types/workflow';
+import { WorkflowService } from '../services/workflowService';
+import { extractErrorMessage } from '../lib/api';
 
 interface WorkflowStoreState {
-  workflows: WorkflowItem[];
-  folders: string[];
-  activeFolder: string;
+  workflows: Workflow[];
+  total: number;
+  loading: boolean;
+  error: string | null;
   statusFilter: 'ALL' | WorkflowStatus;
   searchQuery: string;
-  isDense: boolean;
+  sortBy: 'updatedAt' | 'createdAt' | 'name' | 'status';
+  sortOrder: 'asc' | 'desc';
 
   // Actions
-  createWorkflow: (data: { name: string; folder?: string }) => WorkflowItem;
-  updateWorkflow: (id: string, updates: Partial<WorkflowItem>) => void;
-  toggleStatus: (id: string) => void;
-  moveToTrash: (id: string) => void;
-  restoreFromTrash: (id: string) => void;
-  deletePermanently: (id: string) => void;
-  addFolder: (name: string) => void;
-  setActiveFolder: (folder: string) => void;
+  fetchWorkflows: () => Promise<void>;
+  createWorkflow: (data: CreateWorkflowInput) => Promise<Workflow>;
+  updateWorkflow: (id: string, data: UpdateWorkflowInput) => Promise<Workflow>;
+  updateStatus: (id: string, status: WorkflowStatus) => Promise<void>;
+  toggleStatus: (id: string) => Promise<void>;
+  duplicateWorkflow: (id: string) => Promise<Workflow>;
+  deleteWorkflow: (id: string) => Promise<void>;
   setStatusFilter: (filter: 'ALL' | WorkflowStatus) => void;
   setSearchQuery: (query: string) => void;
-  toggleDenseMode: () => void;
+  setSort: (sortBy: 'updatedAt' | 'createdAt' | 'name' | 'status', sortOrder?: 'asc' | 'desc') => void;
 }
 
-export const useWorkflowStore = create<WorkflowStoreState>()(
-  persist(
-    (set, get) => ({
-      workflows: [],
-      folders: ['Home', 'Trash'],
-      activeFolder: 'Home',
-      statusFilter: 'ALL',
-      searchQuery: '',
-      isDense: false,
+export const useWorkflowStore = create<WorkflowStoreState>((set, get) => ({
+  workflows: [],
+  total: 0,
+  loading: false,
+  error: null,
+  statusFilter: 'ALL',
+  searchQuery: '',
+  sortBy: 'updatedAt',
+  sortOrder: 'desc',
 
-      createWorkflow: ({ name, folder = 'Home' }) => {
-        const id = 'wf_' + Math.random().toString(36).substring(2, 9);
-        const newWf: WorkflowItem = {
-          id,
-          name: name.trim() || 'Untitled Workflow',
-          status: 'ACTIVE',
-          folder: folder || 'Home',
-          createdAt: new Date().toISOString(),
-          tasksConsumed: 0,
-          apps: ['Webhook', 'API'],
-          webhookUrl: `https://api.kairaconnect.com/v1/wh/${id}`,
-        };
+  fetchWorkflows: async () => {
+    set({ loading: true, error: null });
+    try {
+      const { statusFilter, searchQuery, sortBy, sortOrder } = get();
+      const res = await WorkflowService.getWorkflows({
+        status: statusFilter === 'ALL' ? undefined : statusFilter,
+        search: searchQuery.trim() || undefined,
+        sort: sortBy,
+        order: sortOrder,
+      });
 
-        set((state) => ({
-          workflows: [newWf, ...state.workflows],
-        }));
-
-        return newWf;
-      },
-
-      updateWorkflow: (id, updates) => {
-        set((state) => ({
-          workflows: state.workflows.map((wf) =>
-            wf.id === id ? { ...wf, ...updates } : wf
-          ),
-        }));
-      },
-
-      toggleStatus: (id) => {
-        set((state) => ({
-          workflows: state.workflows.map((wf) => {
-            if (wf.id !== id) return wf;
-            const nextStatus: WorkflowStatus =
-              wf.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-            return { ...wf, status: nextStatus };
-          }),
-        }));
-      },
-
-      moveToTrash: (id) => {
-        set((state) => ({
-          workflows: state.workflows.map((wf) =>
-            wf.id === id ? { ...wf, folder: 'Trash' } : wf
-          ),
-        }));
-      },
-
-      restoreFromTrash: (id) => {
-        set((state) => ({
-          workflows: state.workflows.map((wf) =>
-            wf.id === id ? { ...wf, folder: 'Home' } : wf
-          ),
-        }));
-      },
-
-      deletePermanently: (id) => {
-        set((state) => ({
-          workflows: state.workflows.filter((wf) => wf.id !== id),
-        }));
-      },
-
-      addFolder: (name) => {
-        const cleanName = name.trim();
-        if (!cleanName) return;
-        set((state) => {
-          if (state.folders.includes(cleanName)) return state;
-          return {
-            folders: [...state.folders.filter((f) => f !== 'Trash'), cleanName, 'Trash'],
-          };
-        });
-      },
-
-      setActiveFolder: (folder) => set({ activeFolder: folder }),
-      setStatusFilter: (statusFilter) => set({ statusFilter }),
-      setSearchQuery: (searchQuery) => set({ searchQuery }),
-      toggleDenseMode: () => set((state) => ({ isDense: !state.isDense })),
-    }),
-    {
-      name: 'kaira_workflow_storage',
+      set({
+        workflows: res.workflows,
+        total: res.total,
+        loading: false,
+      });
+    } catch (err) {
+      set({
+        loading: false,
+        error: extractErrorMessage(err),
+      });
     }
-  )
-);
+  },
 
+  createWorkflow: async (data: CreateWorkflowInput) => {
+    set({ loading: true, error: null });
+    try {
+      const created = await WorkflowService.createWorkflow(data);
+      set((state) => ({
+        workflows: [created, ...state.workflows],
+        total: state.total + 1,
+        loading: false,
+      }));
+      return created;
+    } catch (err) {
+      const msg = extractErrorMessage(err);
+      set({ loading: false, error: msg });
+      throw new Error(msg);
+    }
+  },
+
+  updateWorkflow: async (id: string, data: UpdateWorkflowInput) => {
+    try {
+      const updated = await WorkflowService.updateWorkflow(id, data);
+      set((state) => ({
+        workflows: state.workflows.map((wf) => (wf.id === id ? updated : wf)),
+      }));
+      return updated;
+    } catch (err) {
+      const msg = extractErrorMessage(err);
+      set({ error: msg });
+      throw new Error(msg);
+    }
+  },
+
+  updateStatus: async (id: string, status: WorkflowStatus) => {
+    try {
+      const updated = await WorkflowService.updateStatus(id, status);
+      set((state) => ({
+        workflows: state.workflows.map((wf) => (wf.id === id ? updated : wf)),
+      }));
+    } catch (err) {
+      const msg = extractErrorMessage(err);
+      set({ error: msg });
+      throw new Error(msg);
+    }
+  },
+
+  toggleStatus: async (id: string) => {
+    const wf = get().workflows.find((w) => w.id === id);
+    if (!wf) return;
+
+    // Toggle: ACTIVE <-> INACTIVE (or DRAFT -> ACTIVE)
+    const nextStatus: WorkflowStatus = wf.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    await get().updateStatus(id, nextStatus);
+  },
+
+  duplicateWorkflow: async (id: string) => {
+    set({ loading: true, error: null });
+    try {
+      const duplicated = await WorkflowService.duplicateWorkflow(id);
+      set((state) => ({
+        workflows: [duplicated, ...state.workflows],
+        total: state.total + 1,
+        loading: false,
+      }));
+      return duplicated;
+    } catch (err) {
+      const msg = extractErrorMessage(err);
+      set({ loading: false, error: msg });
+      throw new Error(msg);
+    }
+  },
+
+  deleteWorkflow: async (id: string) => {
+    try {
+      await WorkflowService.deleteWorkflow(id);
+      set((state) => ({
+        workflows: state.workflows.filter((wf) => wf.id !== id),
+        total: Math.max(0, state.total - 1),
+      }));
+    } catch (err) {
+      const msg = extractErrorMessage(err);
+      set({ error: msg });
+      throw new Error(msg);
+    }
+  },
+
+  setStatusFilter: (filter) => {
+    set({ statusFilter: filter });
+    get().fetchWorkflows();
+  },
+
+  setSearchQuery: (query) => {
+    set({ searchQuery: query });
+    get().fetchWorkflows();
+  },
+
+  setSort: (sortBy, sortOrder = 'desc') => {
+    set({ sortBy, sortOrder });
+    get().fetchWorkflows();
+  },
+}));

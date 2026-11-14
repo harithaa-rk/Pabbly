@@ -8,6 +8,7 @@ import { errorHandler, notFoundHandler } from './middleware/error.middleware.js'
 import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import workflowRoutes from './routes/workflow.routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -47,6 +48,7 @@ export function createApp(): Express {
   app.use('/api/auth', authRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/admin', adminRoutes);
+  app.use('/api/workflows', workflowRoutes);
 
   // 404 Handler
   app.use(notFoundHandler);

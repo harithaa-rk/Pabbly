@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Search, Filter, Check, ChevronDown, AlignJustify } from 'lucide-react';
-import { useWorkflowStore, WorkflowStatus } from '../../store/workflowStore';
+import { Search, Filter, Check, ChevronDown, ArrowUpDown } from 'lucide-react';
+import { useWorkflowStore } from '../../store/workflowStore';
+import { WorkflowStatus } from '../../types/workflow';
 import { cn } from '../../lib/utils';
 
 export const WorkflowToolbar: React.FC = () => {
@@ -11,11 +12,13 @@ export const WorkflowToolbar: React.FC = () => {
     setSearchQuery,
     statusFilter,
     setStatusFilter,
-    isDense,
-    toggleDenseMode,
+    sortBy,
+    sortOrder,
+    setSort,
   } = useWorkflowStore();
 
   const [filterOpen, setFilterOpen] = useState(false);
+  const [sortOpen, setSortOpen] = useState(false);
 
   const filterOptions: Array<{ label: string; value: 'ALL' | WorkflowStatus }> = [
     { label: 'All Statuses', value: 'ALL' },
@@ -23,6 +26,23 @@ export const WorkflowToolbar: React.FC = () => {
     { label: 'Inactive', value: 'INACTIVE' },
     { label: 'Draft', value: 'DRAFT' },
   ];
+
+  const sortOptions: Array<{
+    label: string;
+    sortBy: 'updatedAt' | 'createdAt' | 'name' | 'status';
+    sortOrder: 'asc' | 'desc';
+  }> = [
+    { label: 'Last Modified', sortBy: 'updatedAt', sortOrder: 'desc' },
+    { label: 'Oldest Modified', sortBy: 'updatedAt', sortOrder: 'asc' },
+    { label: 'Created (Newest)', sortBy: 'createdAt', sortOrder: 'desc' },
+    { label: 'Name (A-Z)', sortBy: 'name', sortOrder: 'asc' },
+    { label: 'Name (Z-A)', sortBy: 'name', sortOrder: 'desc' },
+    { label: 'Status', sortBy: 'status', sortOrder: 'asc' },
+  ];
+
+  const currentSortLabel =
+    sortOptions.find((s) => s.sortBy === sortBy && s.sortOrder === sortOrder)?.label ||
+    'Last Modified';
 
   return (
     <div className="p-4 border-b border-[#E9E5E4] flex flex-wrap items-center justify-between gap-3 bg-[#FFFDFB]">
@@ -35,12 +55,12 @@ export const WorkflowToolbar: React.FC = () => {
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Search workflows..."
+          placeholder="Search workflows by name or description..."
           className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A]"
         />
       </div>
 
-      {/* Filter and Dense Toggle */}
+      {/* Controls: Filter & Sort */}
       <div className="flex items-center gap-2">
         {/* Status Filter Dropdown */}
         <div className="relative">
@@ -56,8 +76,8 @@ export const WorkflowToolbar: React.FC = () => {
             <Filter className="w-3.5 h-3.5 text-[#667085]" />
             <span>
               {statusFilter === 'ALL'
-                ? 'Filters'
-                : filterOptions.find((f) => f.value === statusFilter)?.label}
+                ? 'Status: All'
+                : `Status: ${filterOptions.find((f) => f.value === statusFilter)?.label}`}
             </span>
             <ChevronDown className="w-3 h-3 text-[#667085]" />
           </button>
@@ -68,7 +88,7 @@ export const WorkflowToolbar: React.FC = () => {
                 className="fixed inset-0 z-30"
                 onClick={() => setFilterOpen(false)}
               />
-              <div className="absolute right-0 mt-1 w-36 bg-white rounded-xl shadow-dropdown border border-[#E9E5E4] py-1 z-40 text-xs animate-scaleUp">
+              <div className="absolute right-0 mt-1 w-40 bg-white rounded-xl shadow-dropdown border border-[#E9E5E4] py-1 z-40 text-xs animate-scaleUp">
                 {filterOptions.map((opt) => (
                   <button
                     key={opt.value}
@@ -89,22 +109,44 @@ export const WorkflowToolbar: React.FC = () => {
           )}
         </div>
 
-        {/* Dense Toggle */}
-        <button
-          onClick={toggleDenseMode}
-          title={isDense ? 'Standard View' : 'Dense View'}
-          className={cn(
-            'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors',
-            isDense
-              ? 'bg-[#182033] text-white border-[#182033]'
-              : 'bg-white border-[#E9E5E4] text-[#344054] hover:bg-[#FFF7F4]'
+        {/* Sort Dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setSortOpen(!sortOpen)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-[#E9E5E4] bg-white text-[#344054] hover:bg-[#FFF7F4] transition-colors"
+          >
+            <ArrowUpDown className="w-3.5 h-3.5 text-[#667085]" />
+            <span>{currentSortLabel}</span>
+            <ChevronDown className="w-3 h-3 text-[#667085]" />
+          </button>
+
+          {sortOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-30"
+                onClick={() => setSortOpen(false)}
+              />
+              <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-dropdown border border-[#E9E5E4] py-1 z-40 text-xs animate-scaleUp">
+                {sortOptions.map((opt) => (
+                  <button
+                    key={opt.label}
+                    onClick={() => {
+                      setSort(opt.sortBy, opt.sortOrder);
+                      setSortOpen(false);
+                    }}
+                    className="w-full flex items-center justify-between px-3 py-1.5 text-left text-[#344054] hover:bg-[#FFF7F4] hover:text-[#182033]"
+                  >
+                    <span>{opt.label}</span>
+                    {sortBy === opt.sortBy && sortOrder === opt.sortOrder && (
+                      <Check className="w-3.5 h-3.5 text-[#E85D8A]" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
           )}
-        >
-          <AlignJustify className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Dense</span>
-        </button>
+        </div>
       </div>
     </div>
   );
 };
-

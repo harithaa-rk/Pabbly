@@ -1,5 +1,5 @@
 import React from 'react';
-import { WorkflowStatus } from '../../store/workflowStore';
+import { WorkflowStatus } from '../../types/workflow';
 
 interface WorkflowStatusBadgeProps {
   status: WorkflowStatus;
@@ -32,4 +32,3 @@ export const WorkflowStatusBadge: React.FC<WorkflowStatusBadgeProps> = ({ status
       return null;
   }
 };
-

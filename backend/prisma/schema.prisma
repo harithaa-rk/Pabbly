@@ -13,6 +13,12 @@ enum Role {
   TEAM_MEMBER
 }
 
+enum WorkflowStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
 model User {
   id                  String               @id @default(auto()) @map("_id") @db.ObjectId
   name                String
@@ -30,10 +36,29 @@ model User {
   verificationTokens  VerificationToken[]
   passwordResetTokens PasswordResetToken[]
   sessions            Session[]
+  workflows           Workflow[]
 
   @@index([role])
   @@index([isActive])
   @@map("users")
+}
+
+model Workflow {
+  id          String         @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  status      WorkflowStatus @default(DRAFT)
+  version     Int            @default(1)
+  nodes       Json           @default("[]")
+  connections Json           @default("[]")
+  ownerId     String         @db.ObjectId
+  owner       User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([ownerId])
+  @@index([status])
+  @@map("workflows")
 }
 
 model VerificationToken {

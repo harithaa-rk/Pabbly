@@ -43,9 +43,9 @@ export const TopHeader: React.FC<TopHeaderProps> = ({ onOpenHelp }) => {
 
   return (
     <header className="h-16 bg-white border-b border-[#E9E5E4] px-6 flex items-center justify-between sticky top-0 z-30 select-none">
-      {/* Left: Brand name display if on mobile/clean desktop view */}
+      {/* Left: Brand name display */}
       <div className="flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-black overflow-hidden flex items-center justify-center border border-slate-200 shadow-2xs sm:hidden">
+        <div className="w-8 h-8 rounded-xl bg-black overflow-hidden flex items-center justify-center border border-slate-800 shadow-2xs">
           <img src="/logo.png" alt="Kaira Logo" className="w-full h-full object-contain p-0.5" />
         </div>
         <span className="text-base font-bold text-[#182033] tracking-tight">

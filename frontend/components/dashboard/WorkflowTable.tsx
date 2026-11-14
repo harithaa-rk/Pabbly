@@ -1,240 +1,204 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import {
-  Webhook,
-  Send,
-  Database,
-  Globe,
-  Folder,
+  GitBranch,
+  Loader2,
+  Calendar,
+  Clock,
+  ToggleLeft,
+  ToggleRight,
+  ExternalLink,
 } from 'lucide-react';
-import { useWorkflowStore, WorkflowItem } from '../../store/workflowStore';
+import { useWorkflowStore } from '../../store/workflowStore';
+import { Workflow } from '../../types/workflow';
 import { WorkflowStatusBadge } from './WorkflowStatusBadge';
 import { WorkflowActionMenu } from './WorkflowActionMenu';
 import { EmptyWorkflowState } from './EmptyWorkflowState';
-import { formatDate, cn } from '../../lib/utils';
+import { formatDate } from '../../lib/utils';
+import { useToast } from '../../hooks/useToast';
 
 interface WorkflowTableProps {
   onCreateClick: () => void;
 }
 
 export const WorkflowTable: React.FC<WorkflowTableProps> = ({ onCreateClick }) => {
-  const { workflows, activeFolder, statusFilter, searchQuery, isDense } =
-    useWorkflowStore();
+  const {
+    workflows,
+    loading,
+    error,
+    searchQuery,
+    statusFilter,
+    fetchWorkflows,
+    toggleStatus,
+    setSearchQuery,
+    setStatusFilter,
+    updateWorkflow,
+  } = useWorkflowStore();
 
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [rowsPerPage, setRowsPerPage] = useState<number>(10);
-  const [currentPage, setCurrentPage] = useState<number>(1);
+  const { success, error: toastError } = useToast();
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  // Filter workflows according to active folder, statusFilter, and searchQuery
-  const filteredWorkflows = workflows.filter((wf) => {
-    // Folder match
-    if (activeFolder === 'Trash') {
-      if (wf.folder !== 'Trash') return false;
-    } else {
-      if (wf.folder === 'Trash') return false;
-      if (activeFolder !== 'Home' && wf.folder !== activeFolder) return false;
-    }
+  useEffect(() => {
+    fetchWorkflows();
+  }, [fetchWorkflows]);
 
-    // Status filter match
-    if (statusFilter !== 'ALL' && wf.status !== statusFilter) {
-      return false;
-    }
-
-    // Search query match (by name or webhookUrl)
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchName = wf.name.toLowerCase().includes(q);
-      const matchWebhook = wf.webhookUrl.toLowerCase().includes(q);
-      if (!matchName && !matchWebhook) return false;
-    }
-
-    return true;
-  });
-
-  const total = filteredWorkflows.length;
-  const totalPages = Math.ceil(total / rowsPerPage) || 1;
-  const paginatedWorkflows = filteredWorkflows.slice(
-    (currentPage - 1) * rowsPerPage,
-    currentPage * rowsPerPage
-  );
-
-  const toggleSelectAll = () => {
-    if (selectedIds.length === paginatedWorkflows.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(paginatedWorkflows.map((w) => w.id));
+  const handleToggle = async (wf: Workflow) => {
+    setTogglingId(wf.id);
+    try {
+      await toggleStatus(wf.id);
+      success(`Workflow is now ${wf.status === 'ACTIVE' ? 'inactive' : 'active'}`);
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to update status');
+    } finally {
+      setTogglingId(null);
     }
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+  const handleRename = async (wf: Workflow) => {
+    const newName = window.prompt('Enter new workflow name:', wf.name);
+    if (newName && newName.trim() && newName.trim() !== wf.name) {
+      try {
+        await updateWorkflow(wf.id, { name: newName.trim() });
+        success('Workflow renamed successfully');
+      } catch (err: any) {
+        toastError(err?.message || 'Failed to rename workflow');
+      }
+    }
+  };
+
+  if (loading && workflows.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <Loader2 className="w-8 h-8 animate-spin text-[#E85D8A] mb-3" />
+        <p className="text-xs font-medium text-[#667085]">Loading workflows from database...</p>
+      </div>
     );
-  };
-
-  if (filteredWorkflows.length === 0) {
-    return <EmptyWorkflowState onCreateClick={onCreateClick} />;
   }
 
-  const renderAppBadges = (apps: string[]) => {
+  if (error && workflows.length === 0) {
     return (
-      <div className="flex items-center -space-x-1">
-        <div
-          title="Webhook Trigger"
-          className="w-6 h-6 rounded-md bg-[#FFF7F4] border border-[#E9E5E4] flex items-center justify-center text-[#E85D8A]"
+      <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+        <p className="text-sm font-semibold text-red-600 mb-1">Failed to load workflows</p>
+        <p className="text-xs text-[#667085] mb-4">{error}</p>
+        <button
+          onClick={() => fetchWorkflows()}
+          className="text-xs font-semibold text-[#E85D8A] hover:underline"
         >
-          <Webhook className="w-3.5 h-3.5" />
-        </div>
-        <div
-          title="HTTP API Action"
-          className="w-6 h-6 rounded-md bg-[#E8DDF0] border border-[#E9E5E4] flex items-center justify-center text-[#6D4298]"
-        >
-          <Globe className="w-3.5 h-3.5" />
-        </div>
+          Try Again
+        </button>
       </div>
     );
-  };
+  }
+
+  const isFiltered = Boolean(searchQuery.trim() || statusFilter !== 'ALL');
+
+  if (workflows.length === 0) {
+    return (
+      <EmptyWorkflowState
+        onCreateClick={onCreateClick}
+        isFiltered={isFiltered}
+        onClearFilters={() => {
+          setSearchQuery('');
+          setStatusFilter('ALL');
+        }}
+      />
+    );
+  }
 
   return (
-    <div className="flex flex-col flex-1">
-      <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="border-b border-[#E9E5E4] bg-[#FFF7F4]/60 text-[11px] font-semibold uppercase tracking-wider text-[#667085]">
-              <th className="w-10 px-4 py-3 text-center">
-                <input
-                  type="checkbox"
-                  checked={
-                    paginatedWorkflows.length > 0 &&
-                    selectedIds.length === paginatedWorkflows.length
-                  }
-                  onChange={toggleSelectAll}
-                  className="rounded border-[#E9E5E4] text-[#E85D8A] focus:ring-[#E85D8A] cursor-pointer"
-                />
-              </th>
-              <th className="px-4 py-3 min-w-[140px]">Status / Date</th>
-              <th className="px-4 py-3 w-28">Application</th>
-              <th className="px-4 py-3">Workflow Name</th>
-              <th className="px-4 py-3 min-w-[140px]">Task Consumption</th>
-              <th className="w-12 px-4 py-3 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[#E9E5E4]">
-            {paginatedWorkflows.map((wf) => {
-              const isSelected = selectedIds.includes(wf.id);
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-xs border-collapse">
+        <thead>
+          <tr className="border-b border-[#E9E5E4] bg-[#FFFDFB] text-[#475467] font-semibold select-none">
+            <th className="py-3 px-5">Workflow</th>
+            <th className="py-3 px-4">Status</th>
+            <th className="py-3 px-4 text-center">Active</th>
+            <th className="py-3 px-4">Version</th>
+            <th className="py-3 px-4">Last Modified</th>
+            <th className="py-3 px-4 text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#E9E5E4] bg-white">
+          {workflows.map((wf) => {
+            const isToggling = togglingId === wf.id;
 
-              return (
-                <tr
-                  key={wf.id}
-                  className={cn(
-                    'transition-colors hover:bg-[#FFF7F4]/40 group',
-                    isSelected && 'bg-[#F8DCE5]/20',
-                    isDense ? 'py-1.5' : 'py-3.5'
-                  )}
-                >
-                  {/* Checkbox */}
-                  <td className={cn('px-4 text-center', isDense ? 'py-2' : 'py-3.5')}>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={() => toggleSelect(wf.id)}
-                      className="rounded border-[#E9E5E4] text-[#E85D8A] focus:ring-[#E85D8A] cursor-pointer"
-                    />
-                  </td>
-
-                  {/* Status / Date */}
-                  <td className={cn('px-4', isDense ? 'py-2' : 'py-3.5')}>
-                    <div className="flex flex-col gap-1">
-                      <WorkflowStatusBadge status={wf.status} />
-                      <span className="text-[11px] text-[#667085]">
-                        {formatDate(wf.createdAt)}
-                      </span>
-                    </div>
-                  </td>
-
-                  {/* Application Icons */}
-                  <td className={cn('px-4', isDense ? 'py-2' : 'py-3.5')}>
-                    {renderAppBadges(wf.apps)}
-                  </td>
-
-                  {/* Workflow Name & Folder */}
-                  <td className={cn('px-4', isDense ? 'py-2' : 'py-3.5')}>
-                    <Link
-                      href={`/workflows/${wf.id}`}
-                      className="text-xs font-semibold text-[#182033] hover:text-[#E85D8A] transition-colors line-clamp-1"
-                    >
-                      {wf.name}
-                    </Link>
-                    <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-[#667085]">
-                      <Folder className="w-3 h-3 text-[#98A2B3]" />
-                      <span>{wf.folder}</span>
-                    </div>
-                  </td>
-
-                  {/* Task Consumption */}
-                  <td className={cn('px-4', isDense ? 'py-2' : 'py-3.5')}>
-                    <span className="text-xs font-medium text-[#344054]">
-                      {wf.tasksConsumed} Tasks Consumed
-                    </span>
-                  </td>
-
-                  {/* Actions Dropdown */}
-                  <td className={cn('px-4 text-right', isDense ? 'py-2' : 'py-3.5')}>
-                    <WorkflowActionMenu workflow={wf} />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Pagination Footer (Only if data exists) */}
-      {total > 0 && (
-        <div className="p-4 border-t border-[#E9E5E4] flex flex-wrap items-center justify-between gap-3 text-xs text-[#667085] bg-[#FFFDFB]">
-          <div className="flex items-center gap-2">
-            <span>Rows per page:</span>
-            <select
-              value={rowsPerPage}
-              onChange={(e) => {
-                setRowsPerPage(Number(e.target.value));
-                setCurrentPage(1);
-              }}
-              className="px-2 py-1 bg-white border border-[#E9E5E4] rounded text-xs text-[#182033] focus:outline-none focus:border-[#E85D8A]"
-            >
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span>
-              Page {currentPage} of {totalPages} ({total} total)
-            </span>
-            <div className="flex items-center gap-1">
-              <button
-                disabled={currentPage <= 1}
-                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                className="px-2.5 py-1 rounded border border-[#E9E5E4] hover:bg-[#FFF7F4] disabled:opacity-40 disabled:cursor-not-allowed text-xs font-medium"
+            return (
+              <tr
+                key={wf.id}
+                className="hover:bg-[#FFFDFB] transition-colors group"
               >
-                Previous
-              </button>
-              <button
-                disabled={currentPage >= totalPages}
-                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                className="px-2.5 py-1 rounded border border-[#E9E5E4] hover:bg-[#FFF7F4] disabled:opacity-40 disabled:cursor-not-allowed text-xs font-medium"
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+                {/* Workflow Name & Description */}
+                <td className="py-3.5 px-5">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-[#FFF7F4] border border-[#F8D8C5] text-[#E85D8A] flex items-center justify-center shrink-0 mt-0.5">
+                      <GitBranch className="w-4 h-4 stroke-[1.75]" />
+                    </div>
+                    <div className="min-w-0">
+                      <Link
+                        href={`/workflows/${wf.id}`}
+                        className="text-xs font-bold text-[#182033] hover:text-[#E85D8A] transition-colors truncate block flex items-center gap-1.5"
+                      >
+                        <span className="truncate">{wf.name}</span>
+                        <ExternalLink className="w-3 h-3 text-[#98A2B3] opacity-0 group-hover:opacity-100 transition-opacity" />
+                      </Link>
+                      {wf.description && (
+                        <p className="text-[11px] text-[#667085] truncate max-w-md mt-0.5">
+                          {wf.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </td>
+
+                {/* Status Badge */}
+                <td className="py-3.5 px-4 whitespace-nowrap">
+                  <WorkflowStatusBadge status={wf.status} />
+                </td>
+
+                {/* Status Toggle Switch */}
+                <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                  <button
+                    onClick={() => handleToggle(wf)}
+                    disabled={isToggling}
+                    title={wf.status === 'ACTIVE' ? 'Pause Workflow' : 'Activate Workflow'}
+                    className="inline-flex items-center text-[#667085] hover:text-[#182033] transition-colors disabled:opacity-50"
+                  >
+                    {isToggling ? (
+                      <Loader2 className="w-5 h-5 animate-spin text-[#E85D8A]" />
+                    ) : wf.status === 'ACTIVE' ? (
+                      <ToggleRight className="w-6 h-6 text-[#22A06B]" />
+                    ) : (
+                      <ToggleLeft className="w-6 h-6 text-[#98A2B3]" />
+                    )}
+                  </button>
+                </td>
+
+                {/* Version */}
+                <td className="py-3.5 px-4 whitespace-nowrap text-[#475467]">
+                  <span className="px-2 py-0.5 rounded-md bg-[#F2F4F7] text-[11px] font-medium text-[#344054]">
+                    v{wf.version}
+                  </span>
+                </td>
+
+                {/* Last Modified */}
+                <td className="py-3.5 px-4 whitespace-nowrap text-[#667085]">
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <Clock className="w-3.5 h-3.5 text-[#98A2B3]" />
+                    <span>{formatDate(wf.updatedAt)}</span>
+                  </div>
+                </td>
+
+                {/* Actions Dropdown */}
+                <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                  <WorkflowActionMenu workflow={wf} onEditRename={handleRename} />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 };
-

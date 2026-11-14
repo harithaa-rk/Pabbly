@@ -1,79 +1,202 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
   ArrowLeft,
-  Webhook,
-  Plus,
-  Play,
   Save,
-  CheckCircle2,
-  Globe,
-  Settings,
-  ChevronRight,
+  Power,
   Copy,
-  Check,
+  Trash2,
+  Calendar,
+  Clock,
+  Layers,
+  GitBranch,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react';
 import { DashboardLayout } from '../../../../components/layout/DashboardLayout';
-import { useWorkflowStore } from '../../../../store/workflowStore';
+import { WorkflowService } from '../../../../services/workflowService';
+import { Workflow, WorkflowStatus } from '../../../../types/workflow';
+import { WorkflowStatusBadge } from '../../../../components/dashboard/WorkflowStatusBadge';
+import { DeleteWorkflowModal } from '../../../../components/dashboard/DeleteWorkflowModal';
 import { Button } from '../../../../components/ui/Button';
 import { useToast } from '../../../../hooks/useToast';
+import { formatDate } from '../../../../lib/utils';
+import { extractErrorMessage } from '../../../../lib/api';
 
-export default function WorkflowBuilderPage() {
+export default function WorkflowDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { workflows, updateWorkflow, toggleStatus } = useWorkflowStore();
-  const { success } = useToast();
+  const { success, error: toastError } = useToast();
 
   const workflowId = params.id as string;
-  const workflow = workflows.find((w) => w.id === workflowId);
 
-  const [workflowName, setWorkflowName] = useState(workflow?.name || 'New Automation Workflow');
-  const [copied, setCopied] = useState(false);
-  const [selectedStep, setSelectedStep] = useState<'trigger' | 'action1'>('trigger');
+  const [workflow, setWorkflow] = useState<Workflow | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [statusUpdating, setStatusUpdating] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+  const [deletingModalOpen, setDeletingModalOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const webhookUrl = workflow?.webhookUrl || `https://api.kairaconnect.com/v1/wh/${workflowId}`;
+  // Form fields
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
 
-  const handleCopyWebhook = () => {
-    navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    success('Webhook URL copied to clipboard');
-    setTimeout(() => setCopied(false), 2000);
-  };
+  useEffect(() => {
+    let isMounted = true;
 
-  const handleSave = () => {
-    if (workflow) {
-      updateWorkflow(workflow.id, { name: workflowName });
+    async function loadWorkflow() {
+      setLoading(true);
+      setErrorMessage(null);
+      try {
+        const data = await WorkflowService.getWorkflowById(workflowId);
+        if (isMounted) {
+          setWorkflow(data);
+          setName(data.name);
+          setDescription(data.description || '');
+        }
+      } catch (err) {
+        if (isMounted) {
+          setErrorMessage(extractErrorMessage(err));
+        }
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
     }
-    success('Workflow saved successfully');
+
+    if (workflowId) {
+      loadWorkflow();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [workflowId]);
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim()) {
+      toastError('Workflow name cannot be empty');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const updated = await WorkflowService.updateWorkflow(workflowId, {
+        name: name.trim(),
+        description: description.trim() || null,
+      });
+      setWorkflow(updated);
+      success('Workflow updated successfully');
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to update workflow');
+    } finally {
+      setSaving(false);
+    }
   };
+
+  const handleToggleStatus = async () => {
+    if (!workflow) return;
+    setStatusUpdating(true);
+    const nextStatus: WorkflowStatus = workflow.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
+    try {
+      const updated = await WorkflowService.updateStatus(workflow.id, nextStatus);
+      setWorkflow(updated);
+      success(`Workflow is now ${nextStatus.toLowerCase()}`);
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to update status');
+    } finally {
+      setStatusUpdating(false);
+    }
+  };
+
+  const handleDuplicate = async () => {
+    if (!workflow) return;
+    setDuplicating(true);
+    try {
+      const duplicated = await WorkflowService.duplicateWorkflow(workflow.id);
+      success(`Workflow duplicated as "${duplicated.name}"`);
+      router.push(`/workflows/${duplicated.id}`);
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to duplicate workflow');
+      setDuplicating(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!workflow) return;
+    setDeleting(true);
+    try {
+      await WorkflowService.deleteWorkflow(workflow.id);
+      success('Workflow deleted successfully');
+      router.push('/workflows');
+    } catch (err: any) {
+      toastError(err?.message || 'Failed to delete workflow');
+      setDeleting(false);
+      setDeletingModalOpen(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-[#E85D8A] mb-3" />
+          <p className="text-xs font-medium text-[#667085]">Loading workflow details...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  if (errorMessage || !workflow) {
+    return (
+      <DashboardLayout>
+        <div className="max-w-md mx-auto my-16 bg-white border border-[#E9E5E4] rounded-2xl p-8 text-center shadow-xs">
+          <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h2 className="text-base font-bold text-[#182033] mb-1">Workflow Not Found</h2>
+          <p className="text-xs text-[#667085] mb-6">
+            {errorMessage || 'The requested workflow does not exist or you do not have permission to view it.'}
+          </p>
+          <Button
+            onClick={() => router.push('/workflows')}
+            variant="primary"
+            size="sm"
+            leftIcon={<ArrowLeft className="w-4 h-4" />}
+          >
+            Back to Workflows
+          </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Top Builder Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-white border border-[#E9E5E4] rounded-xl shadow-xs">
+      <div className="space-y-6 max-w-4xl">
+        {/* Top Navigation & Action Header */}
+        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-white border border-[#E9E5E4] rounded-2xl shadow-xs">
           <div className="flex items-center gap-3">
             <Link
-              href="/dashboard"
-              className="p-1.5 rounded-lg text-[#667085] hover:text-[#182033] hover:bg-[#FFF7F4]"
+              href="/workflows"
+              className="p-2 rounded-xl text-[#667085] hover:text-[#182033] hover:bg-[#FFF7F4] border border-[#E9E5E4] transition-colors"
+              title="Back to Workflows"
             >
               <ArrowLeft className="w-4 h-4" />
             </Link>
 
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={workflowName}
-                onChange={(e) => setWorkflowName(e.target.value)}
-                placeholder="Workflow Name"
-                className="text-base font-bold text-[#182033] bg-transparent border-b border-transparent hover:border-[#E9E5E4] focus:border-[#E85D8A] focus:outline-none px-1 py-0.5"
-              />
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#EAF7F0] text-[#22A06B] border border-[#22A06B]/20">
-                {workflow?.status || 'ACTIVE'}
+            <div className="flex items-center gap-2.5">
+              <span className="text-sm sm:text-base font-bold text-[#182033] truncate max-w-xs sm:max-w-md">
+                {workflow.name}
               </span>
+              <WorkflowStatusBadge status={workflow.status} />
             </div>
           </div>
 
@@ -81,186 +204,153 @@ export default function WorkflowBuilderPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={handleSave}
-              leftIcon={<Save className="w-3.5 h-3.5" />}
+              onClick={handleToggleStatus}
+              disabled={statusUpdating}
+              leftIcon={<Power className="w-3.5 h-3.5 text-[#E85D8A]" />}
             >
-              Save
+              {workflow.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
             </Button>
+
             <Button
-              variant="primary"
+              variant="outline"
               size="sm"
-              onClick={() => {
-                if (workflow) toggleStatus(workflow.id);
-                success('Status updated');
-              }}
+              onClick={handleDuplicate}
+              disabled={duplicating}
+              leftIcon={<Copy className="w-3.5 h-3.5 text-[#667085]" />}
             >
-              {workflow?.status === 'ACTIVE' ? 'Pause' : 'Activate'}
+              Duplicate
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeletingModalOpen(true)}
+              className="text-red-600 hover:bg-red-50 hover:border-red-200"
+              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
+            >
+              Delete
             </Button>
           </div>
         </div>
 
-        {/* Builder Canvas Area */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Workflow Sequence Steps */}
-          <div className="lg:col-span-2 space-y-4">
-            {/* Step 1: Trigger */}
-            <div
-              onClick={() => setSelectedStep('trigger')}
-              className={`p-5 rounded-xl border bg-white shadow-xs cursor-pointer transition-all ${
-                selectedStep === 'trigger'
-                  ? 'border-[#E85D8A] ring-2 ring-[#E85D8A]/20'
-                  : 'border-[#E9E5E4] hover:border-[#D8D2D0]'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#FFF7F4] border border-[#F8D8C5] text-[#E85D8A] flex items-center justify-center font-bold text-xs">
-                    1
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#E85D8A]">
-                      Trigger
-                    </span>
-                    <h4 className="text-sm font-bold text-[#182033]">
-                      Webhook by Kaira
-                    </h4>
-                  </div>
-                </div>
-                <span className="text-xs text-[#22A06B] font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Ready
-                </span>
+        {/* Workflow Details & Edit Form */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Main Edit Column */}
+          <div className="md:col-span-2 bg-white border border-[#E9E5E4] rounded-2xl p-6 shadow-xs">
+            <h3 className="text-sm font-bold text-[#182033] mb-4">
+              Workflow Settings
+            </h3>
+
+            <form onSubmit={handleSave} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#182033] mb-1.5">
+                  Workflow Name <span className="text-[#E85D8A]">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Google Sheets Sync"
+                  maxLength={100}
+                  required
+                  className="w-full px-3.5 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A]"
+                />
               </div>
 
-              <p className="text-xs text-[#667085] leading-relaxed mb-3">
-                Receive instant payloads from any external app, website, or service via HTTP POST.
-              </p>
+              <div>
+                <label className="block text-xs font-semibold text-[#182033] mb-1.5">
+                  Description <span className="text-xs font-normal text-[#98A2B3]">(Optional)</span>
+                </label>
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Describe what triggers this workflow and what it automates..."
+                  rows={4}
+                  maxLength={500}
+                  className="w-full px-3.5 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A] resize-none"
+                />
+              </div>
 
-              {/* Webhook URL Field */}
-              <div className="flex items-center gap-2 p-2 bg-[#FFF7F4] border border-[#E9E5E4] rounded-lg">
-                <code className="text-xs text-[#182033] font-mono flex-1 truncate">
-                  {webhookUrl}
-                </code>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleCopyWebhook();
-                  }}
-                  className="px-2 py-1 bg-white border border-[#E9E5E4] hover:bg-[#FFFDFB] text-xs font-semibold rounded text-[#182033] flex items-center gap-1"
+              <div className="pt-2 flex justify-end">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  disabled={saving || !name.trim()}
+                  leftIcon={saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
                 >
-                  {copied ? <Check className="w-3 h-3 text-[#22A06B]" /> : <Copy className="w-3 h-3" />}
-                  <span>{copied ? 'Copied' : 'Copy'}</span>
-                </button>
+                  {saving ? 'Saving...' : 'Save Changes'}
+                </Button>
               </div>
-            </div>
-
-            {/* Connecting Line */}
-            <div className="flex justify-center">
-              <div className="w-0.5 h-6 bg-[#E9E5E4]" />
-            </div>
-
-            {/* Step 2: Action */}
-            <div
-              onClick={() => setSelectedStep('action1')}
-              className={`p-5 rounded-xl border bg-white shadow-xs cursor-pointer transition-all ${
-                selectedStep === 'action1'
-                  ? 'border-[#E85D8A] ring-2 ring-[#E85D8A]/20'
-                  : 'border-[#E9E5E4] hover:border-[#D8D2D0]'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#E8DDF0] border border-[#E9E5E4] text-[#6D4298] flex items-center justify-center font-bold text-xs">
-                    2
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#6D4298]">
-                      Action
-                    </span>
-                    <h4 className="text-sm font-bold text-[#182033]">
-                      API / HTTP Request
-                    </h4>
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-xs text-[#667085] leading-relaxed">
-                Forward transformed data, send notifications, or invoke REST API actions.
-              </p>
-            </div>
+            </form>
           </div>
 
-          {/* Configuration Inspector Sidebar */}
-          <div className="p-5 bg-white border border-[#E9E5E4] rounded-xl shadow-xs space-y-4">
-            <h4 className="text-xs font-bold uppercase tracking-wider text-[#667085]">
-              Step Configuration
-            </h4>
+          {/* Metadata Sidebar Column */}
+          <div className="space-y-4">
+            <div className="bg-white border border-[#E9E5E4] rounded-2xl p-5 shadow-xs space-y-3">
+              <h4 className="text-xs font-bold text-[#182033] uppercase tracking-wider mb-2">
+                Workflow Details
+              </h4>
 
-            {selectedStep === 'trigger' ? (
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block font-semibold text-[#182033] mb-1">
-                    Trigger Event
-                  </label>
-                  <select className="w-full px-2.5 py-1.5 bg-white border border-[#E9E5E4] rounded-lg text-[#182033]">
-                    <option>Catch Hook (Instant JSON / POST)</option>
-                    <option>Catch Raw Payload</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-[#182033] mb-1">
-                    HTTP Method
-                  </label>
-                  <input
-                    type="text"
-                    disabled
-                    value="POST"
-                    className="w-full px-2.5 py-1.5 bg-[#FFF7F4] border border-[#E9E5E4] rounded-lg text-[#182033] font-mono text-xs"
-                  />
-                </div>
-
-                <div className="pt-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="w-full"
-                    leftIcon={<Play className="w-3 h-3 text-[#22A06B]" />}
-                    onClick={() => success('Listening for test payload on webhook URL...')}
-                  >
-                    Capture Test Request
-                  </Button>
-                </div>
+              <div className="flex items-center justify-between text-xs py-1 border-b border-[#F2F4F7]">
+                <span className="text-[#667085] flex items-center gap-1.5">
+                  <Layers className="w-3.5 h-3.5 text-[#98A2B3]" />
+                  Version
+                </span>
+                <span className="font-semibold text-[#182033]">v{workflow.version}</span>
               </div>
-            ) : (
-              <div className="space-y-3 text-xs">
-                <div>
-                  <label className="block font-semibold text-[#182033] mb-1">
-                    Action Event
-                  </label>
-                  <select className="w-full px-2.5 py-1.5 bg-white border border-[#E9E5E4] rounded-lg text-[#182033]">
-                    <option>Send Custom HTTP Request</option>
-                    <option>JSON Webhook Dispatch</option>
-                  </select>
-                </div>
 
-                <div>
-                  <label className="block font-semibold text-[#182033] mb-1">
-                    Endpoint URL
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="https://api.example.com/endpoint"
-                    className="w-full px-2.5 py-1.5 bg-white border border-[#E9E5E4] rounded-lg text-[#182033] focus:border-[#E85D8A]"
-                  />
-                </div>
+              <div className="flex items-center justify-between text-xs py-1 border-b border-[#F2F4F7]">
+                <span className="text-[#667085] flex items-center gap-1.5">
+                  <GitBranch className="w-3.5 h-3.5 text-[#98A2B3]" />
+                  Status
+                </span>
+                <span className="font-semibold text-[#182033] capitalize">{workflow.status.toLowerCase()}</span>
               </div>
-            )}
+
+              <div className="flex items-center justify-between text-xs py-1 border-b border-[#F2F4F7]">
+                <span className="text-[#667085] flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-[#98A2B3]" />
+                  Created
+                </span>
+                <span className="font-medium text-[#475467]">{formatDate(workflow.createdAt)}</span>
+              </div>
+
+              <div className="flex items-center justify-between text-xs py-1">
+                <span className="text-[#667085] flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-[#98A2B3]" />
+                  Modified
+                </span>
+                <span className="font-medium text-[#475467]">{formatDate(workflow.updatedAt)}</span>
+              </div>
+            </div>
+
+            {/* Automation Steps / Canvas info */}
+            <div className="bg-[#FFFDFB] border border-[#E9E5E4] rounded-2xl p-5 shadow-xs">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-6 h-6 rounded-lg bg-[#F8DCE5] text-[#E85D8A] flex items-center justify-center">
+                  <GitBranch className="w-3.5 h-3.5" />
+                </div>
+                <h4 className="text-xs font-bold text-[#182033]">
+                  Workflow Nodes & Steps
+                </h4>
+              </div>
+              <p className="text-[11px] text-[#667085] leading-relaxed">
+                Workflow container initialized with {workflow.nodes?.length || 0} nodes and {workflow.connections?.length || 0} connections. Visual canvas builder connects in the next module.
+              </p>
+            </div>
           </div>
         </div>
+
+        {/* Delete Confirmation Modal */}
+        <DeleteWorkflowModal
+          isOpen={deletingModalOpen}
+          workflowName={workflow.name}
+          isDeleting={deleting}
+          onConfirm={handleDelete}
+          onCancel={() => setDeletingModalOpen(false)}
+        />
       </div>
     </DashboardLayout>
   );
 }
-

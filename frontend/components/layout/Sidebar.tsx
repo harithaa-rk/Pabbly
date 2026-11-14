@@ -6,11 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   GitBranch,
-  History,
   Settings,
-  HelpCircle,
-  Code2,
-  Zap,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -19,14 +15,8 @@ export const Sidebar: React.FC = () => {
 
   const mainNavigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Workflow', href: '/workflows', icon: GitBranch },
-    { name: 'History', href: '/history', icon: History },
+    { name: 'Workflows', href: '/workflows', icon: GitBranch },
     { name: 'Settings', href: '/settings/profile', icon: Settings },
-  ];
-
-  const bottomNavigation = [
-    { name: 'Help', href: '/help', icon: HelpCircle },
-    { name: 'Developer Portal', href: '/developer', icon: Code2 },
   ];
 
   const isCurrentActive = (href: string) => {
@@ -41,7 +31,7 @@ export const Sidebar: React.FC = () => {
       {/* Brand Logo Header */}
       <div className="h-16 flex flex-col items-center justify-center border-b border-[#222C44]/80 px-2">
         <Link href="/dashboard" className="flex flex-col items-center group">
-          <div className="w-9 h-9 rounded-xl bg-black overflow-hidden flex items-center justify-center shadow-xs border border-slate-700/60 transition-transform group-hover:scale-105">
+          <div className="w-10 h-10 rounded-xl bg-black overflow-hidden flex items-center justify-center shadow-xs border border-slate-700/60 transition-transform group-hover:scale-105">
             <img
               src="/logo.png"
               alt="Kaira Logo"
@@ -54,8 +44,8 @@ export const Sidebar: React.FC = () => {
         </Link>
       </div>
 
-      {/* Main Navigation (Icon + Label underneath) */}
-      <nav className="flex-1 py-4 px-2 space-y-1.5 flex flex-col items-center">
+      {/* Main Navigation (Clean UI: only implemented modules) */}
+      <nav className="flex-1 py-4 px-2 space-y-2 flex flex-col items-center">
         {mainNavigation.map((item) => {
           const isActive = isCurrentActive(item.href);
           const Icon = item.icon;
@@ -90,38 +80,6 @@ export const Sidebar: React.FC = () => {
           );
         })}
       </nav>
-
-      {/* Bottom Navigation */}
-      <div className="py-4 px-2 border-t border-[#222C44]/80 space-y-1.5 flex flex-col items-center">
-        {bottomNavigation.map((item) => {
-          const isActive = isCurrentActive(item.href);
-          const Icon = item.icon;
-
-          return (
-            <Link
-              key={item.name}
-              href={item.href}
-              title={item.name}
-              className={cn(
-                'w-full flex flex-col items-center justify-center py-2 px-1 rounded-xl transition-all duration-150 group text-center',
-                isActive
-                  ? 'bg-[#E85D8A] text-white shadow-xs'
-                  : 'text-[#A0AEC0] hover:text-white hover:bg-[#222C44]'
-              )}
-            >
-              <Icon
-                className={cn(
-                  'w-4 h-4 mb-1 transition-transform group-hover:scale-110',
-                  isActive ? 'text-white' : 'text-[#CBD5E1] group-hover:text-white'
-                )}
-              />
-              <span className="text-[10px] leading-tight font-medium text-[#CBD5E1]">
-                {item.name}
-              </span>
-            </Link>
-          );
-        })}
-      </div>
     </aside>
   );
 };
