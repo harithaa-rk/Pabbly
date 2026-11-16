@@ -66,3 +66,4 @@ export class WorkflowService {
     await api.delete(`/workflows/${id}`);
   }
 }
+

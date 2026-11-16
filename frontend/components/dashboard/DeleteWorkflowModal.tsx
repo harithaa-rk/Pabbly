@@ -65,3 +65,4 @@ export const DeleteWorkflowModal: React.FC<DeleteWorkflowModalProps> = ({
     </div>
   );
 };
+

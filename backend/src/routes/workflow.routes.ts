@@ -16,3 +16,4 @@ router.post('/:id/duplicate', WorkflowController.duplicate);
 router.delete('/:id', WorkflowController.delete);
 
 export default router;
+
