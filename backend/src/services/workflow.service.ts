@@ -1,4 +1,6 @@
+import crypto from 'crypto';
 import { prisma } from '../config/database.js';
+import { env } from '../config/env.js';
 import { AppError } from '../utils/apiResponse.js';
 import { WorkflowStatus } from '@prisma/client';
 
@@ -12,6 +14,15 @@ export interface UpdateWorkflowDTO {
   description?: string | null;
   nodes?: any[];
   connections?: any[];
+}
+
+export interface SaveTriggerDTO {
+  type: 'webhook' | 'manual';
+  name: string;
+  enabled?: boolean;
+  config?: {
+    method?: 'POST';
+  };
 }
 
 export interface WorkflowQueryParams {
@@ -149,10 +160,151 @@ export class WorkflowService {
   }
 
   /**
-   * Duplicate a workflow (creates a new DRAFT copy with version 1)
+   * Save or edit workflow trigger (Module 5)
+   */
+  static async saveTrigger(workflowId: string, userId: string, data: SaveTriggerDTO) {
+    const existing = await this.getWorkflowAndVerifyOwnership(workflowId, userId);
+
+    let webhookId: string | null = null;
+    let webhookUrl: string | null = null;
+
+    if (data.type === 'webhook') {
+      // Reuse existing webhook identifier if available, or generate a cryptographically secure 24-char unique ID
+      webhookId =
+        existing.webhookId ||
+        (existing.trigger as any)?.webhookId ||
+        `wh_${crypto.randomBytes(12).toString('hex')}`;
+      webhookUrl = `${env.backendUrl}/api/webhooks/${webhookId}`;
+    }
+
+    const triggerData: Record<string, any> = {
+      type: data.type,
+      name: data.name.trim(),
+      enabled: data.enabled ?? true,
+      config: data.type === 'webhook' ? { method: 'POST' } : {},
+      ...(data.type === 'webhook' ? { webhookId, webhookUrl } : {}),
+      updatedAt: new Date().toISOString(),
+    };
+
+    // Synchronize canvas nodes array (prepares foundation for future Action/Router/Canvas modules)
+    const currentNodes: any[] = Array.isArray(existing.nodes) ? existing.nodes : [];
+    const nonTriggerNodes = currentNodes.filter((n) => n && n.type !== 'trigger');
+
+    const triggerNode = {
+      id: `trigger_${workflowId}`,
+      type: 'trigger',
+      app: data.type,
+      name: data.name.trim(),
+      enabled: triggerData.enabled,
+      position: { x: 250, y: 100 },
+      config: triggerData.config,
+      ...(data.type === 'webhook' ? { webhookId, webhookUrl } : {}),
+    };
+
+    const updatedNodes = [triggerNode, ...nonTriggerNodes];
+
+    const updated = await prisma.workflow.update({
+      where: { id: workflowId },
+      data: {
+        trigger: triggerData,
+        webhookId,
+        nodes: updatedNodes,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Enable or disable workflow trigger (Module 5)
+   */
+  static async updateTriggerStatus(workflowId: string, userId: string, enabled: boolean) {
+    const existing = await this.getWorkflowAndVerifyOwnership(workflowId, userId);
+
+    if (!existing.trigger) {
+      throw new AppError('No trigger configured for this workflow', 400);
+    }
+
+    const currentTrigger = existing.trigger as Record<string, any>;
+    const updatedTrigger = {
+      ...currentTrigger,
+      enabled,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const currentNodes: any[] = Array.isArray(existing.nodes) ? existing.nodes : [];
+    const updatedNodes = currentNodes.map((node) => {
+      if (node && node.type === 'trigger') {
+        return { ...node, enabled };
+      }
+      return node;
+    });
+
+    const updated = await prisma.workflow.update({
+      where: { id: workflowId },
+      data: {
+        trigger: updatedTrigger,
+        nodes: updatedNodes,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Remove workflow trigger (Module 5)
+   */
+  static async removeTrigger(workflowId: string, userId: string) {
+    const existing = await this.getWorkflowAndVerifyOwnership(workflowId, userId);
+
+    const currentNodes: any[] = Array.isArray(existing.nodes) ? existing.nodes : [];
+    const remainingNodes = currentNodes.filter((n) => n && n.type !== 'trigger');
+
+    const updated = await prisma.workflow.update({
+      where: { id: workflowId },
+      data: {
+        trigger: null,
+        webhookId: null,
+        nodes: remainingNodes,
+      },
+    });
+
+    return updated;
+  }
+
+  /**
+   * Duplicate a workflow (creates a new DRAFT copy with version 1 and independent trigger)
    */
   static async duplicateWorkflow(workflowId: string, userId: string) {
     const original = await this.getWorkflowAndVerifyOwnership(workflowId, userId);
+
+    let duplicatedTrigger: Record<string, any> | null = null;
+    let newWebhookId: string | null = null;
+
+    if (original.trigger) {
+      duplicatedTrigger = JSON.parse(JSON.stringify(original.trigger));
+      if (duplicatedTrigger && duplicatedTrigger.type === 'webhook') {
+        // Generate an independent unique webhook ID for the duplicate
+        newWebhookId = `wh_${crypto.randomBytes(12).toString('hex')}`;
+        duplicatedTrigger.webhookId = newWebhookId;
+        duplicatedTrigger.webhookUrl = `${env.backendUrl}/api/webhooks/${newWebhookId}`;
+      }
+    }
+
+    let clonedNodes = original.nodes ? JSON.parse(JSON.stringify(original.nodes)) : [];
+    if (Array.isArray(clonedNodes) && newWebhookId) {
+      clonedNodes = clonedNodes.map((n: any) => {
+        if (n && n.type === 'trigger' && n.app === 'webhook') {
+          return {
+            ...n,
+            id: `trigger_copy_${Date.now()}`,
+            webhookId: newWebhookId,
+            webhookUrl: `${env.backendUrl}/api/webhooks/${newWebhookId}`,
+          };
+        }
+        return n;
+      });
+    }
 
     const duplicated = await prisma.workflow.create({
       data: {
@@ -160,7 +312,9 @@ export class WorkflowService {
         description: original.description,
         status: WorkflowStatus.DRAFT,
         version: 1,
-        nodes: original.nodes ? JSON.parse(JSON.stringify(original.nodes)) : [],
+        trigger: duplicatedTrigger ?? undefined,
+        webhookId: newWebhookId,
+        nodes: clonedNodes,
         connections: original.connections ? JSON.parse(JSON.stringify(original.connections)) : [],
         ownerId: userId,
       },
@@ -182,4 +336,3 @@ export class WorkflowService {
     return { id: workflowId };
   }
 }
-

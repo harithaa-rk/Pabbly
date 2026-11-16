@@ -5,6 +5,7 @@ import {
   UpdateWorkflowInput,
   WorkflowQueryParams,
   WorkflowStatus,
+  SaveTriggerInput,
 } from '../types/workflow';
 
 export class WorkflowService {
@@ -65,5 +66,28 @@ export class WorkflowService {
   static async deleteWorkflow(id: string): Promise<void> {
     await api.delete(`/workflows/${id}`);
   }
-}
 
+  /**
+   * Save or edit workflow trigger (Module 5)
+   */
+  static async saveTrigger(workflowId: string, data: SaveTriggerInput): Promise<Workflow> {
+    const res = await api.put(`/workflows/${workflowId}/trigger`, data);
+    return res.data.data;
+  }
+
+  /**
+   * Enable or disable workflow trigger (Module 5)
+   */
+  static async updateTriggerStatus(workflowId: string, enabled: boolean): Promise<Workflow> {
+    const res = await api.patch(`/workflows/${workflowId}/trigger/status`, { enabled });
+    return res.data.data;
+  }
+
+  /**
+   * Remove workflow trigger (Module 5)
+   */
+  static async removeTrigger(workflowId: string): Promise<Workflow> {
+    const res = await api.delete(`/workflows/${workflowId}/trigger`);
+    return res.data.data;
+  }
+}

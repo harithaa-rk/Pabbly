@@ -44,3 +44,28 @@ export const workflowQuerySchema = z.object({
   order: z.enum(['asc', 'desc']).optional(),
 });
 
+export const saveTriggerSchema = z.object({
+  type: z.enum(['webhook', 'manual'], {
+    errorMap: () => ({ message: 'Trigger type must be either webhook or manual' }),
+  }),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Trigger name is required')
+    .max(100, 'Trigger name cannot exceed 100 characters'),
+  enabled: z.boolean().optional().default(true),
+  config: z
+    .object({
+      method: z.enum(['POST']).optional(),
+    })
+    .optional()
+    .default({}),
+});
+
+export const updateTriggerStatusSchema = z.object({
+  enabled: z.boolean({
+    required_error: 'Trigger enabled state is required',
+    invalid_type_error: 'Trigger enabled state must be a boolean',
+  }),
+});
+

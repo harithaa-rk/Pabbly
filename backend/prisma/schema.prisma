@@ -49,6 +49,8 @@ model Workflow {
   description String?
   status      WorkflowStatus @default(DRAFT)
   version     Int            @default(1)
+  trigger     Json?
+  webhookId   String?
   nodes       Json           @default("[]")
   connections Json           @default("[]")
   ownerId     String         @db.ObjectId
@@ -58,6 +60,7 @@ model Workflow {
 
   @@index([ownerId])
   @@index([status])
+  @@index([webhookId])
   @@map("workflows")
 }
 

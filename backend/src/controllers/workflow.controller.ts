@@ -6,6 +6,8 @@ import {
   updateWorkflowSchema,
   updateWorkflowStatusSchema,
   workflowQuerySchema,
+  saveTriggerSchema,
+  updateTriggerStatusSchema,
 } from '../validators/workflow.validator.js';
 import { sendSuccess, AppError } from '../utils/apiResponse.js';
 
@@ -104,6 +106,49 @@ export class WorkflowController {
 
       await WorkflowService.deleteWorkflow(req.params.id, req.user.id);
       sendSuccess(res, 'Workflow deleted successfully', null, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async saveTrigger(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new AppError('Unauthorized', 401);
+      }
+
+      const validated = saveTriggerSchema.parse(req.body);
+      const updated = await WorkflowService.saveTrigger(req.params.id, req.user.id, validated as any);
+
+      sendSuccess(res, 'Trigger saved successfully', updated, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async updateTriggerStatus(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new AppError('Unauthorized', 401);
+      }
+
+      const { enabled } = updateTriggerStatusSchema.parse(req.body);
+      const updated = await WorkflowService.updateTriggerStatus(req.params.id, req.user.id, enabled);
+
+      sendSuccess(res, `Trigger ${enabled ? 'enabled' : 'disabled'} successfully`, updated, 200);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  static async removeTrigger(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      if (!req.user) {
+        throw new AppError('Unauthorized', 401);
+      }
+
+      const updated = await WorkflowService.removeTrigger(req.params.id, req.user.id);
+      sendSuccess(res, 'Trigger removed successfully', updated, 200);
     } catch (error) {
       next(error);
     }

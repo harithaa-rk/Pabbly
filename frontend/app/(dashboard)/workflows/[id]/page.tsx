@@ -9,24 +9,29 @@ import {
   Power,
   Copy,
   Trash2,
-  Calendar,
-  Clock,
-  Layers,
   GitBranch,
   Loader2,
   AlertCircle,
+  Check,
 } from 'lucide-react';
 import { DashboardLayout } from '../../../../components/layout/DashboardLayout';
 import { WorkflowService } from '../../../../services/workflowService';
-import { Workflow, WorkflowStatus } from '../../../../types/workflow';
+import {
+  Workflow,
+  WorkflowStatus,
+  TriggerType,
+  SaveTriggerInput,
+} from '../../../../types/workflow';
 import { WorkflowStatusBadge } from '../../../../components/dashboard/WorkflowStatusBadge';
 import { DeleteWorkflowModal } from '../../../../components/dashboard/DeleteWorkflowModal';
+import { TriggerSelector } from '../../../../components/workflow/TriggerSelector';
+import { TriggerCanvasNode } from '../../../../components/workflow/TriggerCanvasNode';
+import { TriggerDrawer } from '../../../../components/workflow/TriggerDrawer';
 import { Button } from '../../../../components/ui/Button';
 import { useToast } from '../../../../hooks/useToast';
-import { formatDate } from '../../../../lib/utils';
 import { extractErrorMessage } from '../../../../lib/api';
 
-export default function WorkflowDetailPage() {
+export default function WorkflowEditorPage() {
   const params = useParams();
   const router = useRouter();
   const { success, error: toastError } = useToast();
@@ -35,16 +40,20 @@ export default function WorkflowDetailPage() {
 
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingName, setSavingName] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [deletingModalOpen, setDeletingModalOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Form fields
+  // Editable workflow metadata
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  const [hasNameChanged, setHasNameChanged] = useState(false);
+
+  // Trigger drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedTriggerType, setSelectedTriggerType] = useState<TriggerType>('webhook');
 
   useEffect(() => {
     let isMounted = true;
@@ -57,7 +66,7 @@ export default function WorkflowDetailPage() {
         if (isMounted) {
           setWorkflow(data);
           setName(data.name);
-          setDescription(data.description || '');
+          setHasNameChanged(false);
         }
       } catch (err) {
         if (isMounted) {
@@ -79,29 +88,30 @@ export default function WorkflowDetailPage() {
     };
   }, [workflowId]);
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Handle saving workflow name changes
+  const handleSaveName = async () => {
     if (!name.trim()) {
       toastError('Workflow name cannot be empty');
       return;
     }
 
-    setSaving(true);
+    setSavingName(true);
     try {
       const updated = await WorkflowService.updateWorkflow(workflowId, {
         name: name.trim(),
-        description: description.trim() || null,
       });
       setWorkflow(updated);
-      success('Workflow updated successfully');
+      setHasNameChanged(false);
+      success('Workflow name updated');
     } catch (err: any) {
-      toastError(err?.message || 'Failed to update workflow');
+      toastError(err?.message || 'Failed to update workflow name');
     } finally {
-      setSaving(false);
+      setSavingName(false);
     }
   };
 
-  const handleToggleStatus = async () => {
+  // Toggle workflow lifecycle status (ACTIVE / INACTIVE)
+  const handleToggleWorkflowStatus = async () => {
     if (!workflow) return;
     setStatusUpdating(true);
     const nextStatus: WorkflowStatus = workflow.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
@@ -110,12 +120,13 @@ export default function WorkflowDetailPage() {
       setWorkflow(updated);
       success(`Workflow is now ${nextStatus.toLowerCase()}`);
     } catch (err: any) {
-      toastError(err?.message || 'Failed to update status');
+      toastError(err?.message || 'Failed to update workflow status');
     } finally {
       setStatusUpdating(false);
     }
   };
 
+  // Duplicate workflow
   const handleDuplicate = async () => {
     if (!workflow) return;
     setDuplicating(true);
@@ -129,6 +140,7 @@ export default function WorkflowDetailPage() {
     }
   };
 
+  // Delete workflow
   const handleDelete = async () => {
     if (!workflow) return;
     setDeleting(true);
@@ -143,12 +155,43 @@ export default function WorkflowDetailPage() {
     }
   };
 
+  // Trigger operations (Module 5)
+  const handleSelectTriggerType = (type: TriggerType) => {
+    setSelectedTriggerType(type);
+    setDrawerOpen(true);
+  };
+
+  const handleOpenExistingTrigger = () => {
+    if (workflow?.trigger) {
+      setSelectedTriggerType(workflow.trigger.type);
+      setDrawerOpen(true);
+    }
+  };
+
+  const handleSaveTrigger = async (data: SaveTriggerInput) => {
+    const updated = await WorkflowService.saveTrigger(workflowId, data);
+    setWorkflow(updated);
+    success('Trigger configured and saved to database');
+  };
+
+  const handleToggleTriggerStatus = async (enabled: boolean) => {
+    const updated = await WorkflowService.updateTriggerStatus(workflowId, enabled);
+    setWorkflow(updated);
+    success(`Trigger ${enabled ? 'enabled' : 'disabled'}`);
+  };
+
+  const handleRemoveTrigger = async () => {
+    const updated = await WorkflowService.removeTrigger(workflowId);
+    setWorkflow(updated);
+    success('Trigger removed from workflow');
+  };
+
   if (loading) {
     return (
       <DashboardLayout>
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <Loader2 className="w-8 h-8 animate-spin text-[#E85D8A] mb-3" />
-          <p className="text-xs font-medium text-[#667085]">Loading workflow details...</p>
+          <p className="text-xs font-medium text-[#667085]">Loading workflow editor...</p>
         </div>
       </DashboardLayout>
     );
@@ -180,35 +223,67 @@ export default function WorkflowDetailPage() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-6 max-w-4xl">
-        {/* Top Navigation & Action Header */}
-        <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-white border border-[#E9E5E4] rounded-2xl shadow-xs">
-          <div className="flex items-center gap-3">
+      <div className="space-y-4">
+        {/* Top Workflow Editor Navigation Bar */}
+        <div className="bg-white border border-[#E9E5E4] rounded-2xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
             <Link
               href="/workflows"
-              className="p-2 rounded-xl text-[#667085] hover:text-[#182033] hover:bg-[#FFF7F4] border border-[#E9E5E4] transition-colors"
+              className="p-2 rounded-xl text-[#667085] hover:text-[#182033] hover:bg-[#FFF7F4] border border-[#E9E5E4] transition-colors shrink-0"
               title="Back to Workflows"
             >
               <ArrowLeft className="w-4 h-4" />
             </Link>
 
-            <div className="flex items-center gap-2.5">
-              <span className="text-sm sm:text-base font-bold text-[#182033] truncate max-w-xs sm:max-w-md">
-                {workflow.name}
-              </span>
+            {/* Editable Workflow Name */}
+            <div className="flex items-center gap-2 min-w-0 max-w-md">
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  setHasNameChanged(e.target.value !== workflow.name);
+                }}
+                onBlur={() => {
+                  if (hasNameChanged && name.trim()) {
+                    handleSaveName();
+                  }
+                }}
+                maxLength={100}
+                className="text-base sm:text-lg font-bold text-[#182033] bg-transparent hover:bg-[#FFFDFB] focus:bg-white border border-transparent hover:border-[#E9E5E4] focus:border-[#E85D8A] focus:outline-none rounded-lg px-2 py-1 transition-all truncate"
+                placeholder="Workflow Name"
+              />
+              {hasNameChanged && (
+                <button
+                  type="button"
+                  onClick={handleSaveName}
+                  disabled={savingName || !name.trim()}
+                  className="p-1.5 rounded-lg bg-[#E85D8A] text-white hover:bg-[#D94C79] transition-colors shrink-0"
+                  title="Save Name"
+                >
+                  {savingName ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                </button>
+              )}
+            </div>
+
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
               <WorkflowStatusBadge status={workflow.status} />
+              <span className="text-[11px] font-semibold text-[#475467] bg-[#F2F4F7] px-2 py-0.5 rounded-md">
+                v{workflow.version}
+              </span>
             </div>
           </div>
 
+          {/* Action Controls */}
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              onClick={handleToggleStatus}
+              onClick={handleToggleWorkflowStatus}
               disabled={statusUpdating}
               leftIcon={<Power className="w-3.5 h-3.5 text-[#E85D8A]" />}
             >
-              {workflow.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+              {workflow.status === 'ACTIVE' ? 'Pause' : 'Activate'}
             </Button>
 
             <Button
@@ -233,114 +308,39 @@ export default function WorkflowDetailPage() {
           </div>
         </div>
 
-        {/* Workflow Details & Edit Form */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Main Edit Column */}
-          <div className="md:col-span-2 bg-white border border-[#E9E5E4] rounded-2xl p-6 shadow-xs">
-            <h3 className="text-sm font-bold text-[#182033] mb-4">
-              Workflow Settings
-            </h3>
+        {/* Workflow Editor Canvas Area */}
+        <div className="relative min-h-[580px] bg-[#FFFDFB] border border-[#E9E5E4] rounded-2xl p-6 sm:p-12 flex flex-col items-center justify-center shadow-2xs overflow-hidden">
+          {/* Subtle canvas grid pattern */}
+          <div
+            className="absolute inset-0 pointer-events-none opacity-[0.4]"
+            style={{
+              backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)',
+              backgroundSize: '24px 24px',
+            }}
+          />
 
-            <form onSubmit={handleSave} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-[#182033] mb-1.5">
-                  Workflow Name <span className="text-[#E85D8A]">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Google Sheets Sync"
-                  maxLength={100}
-                  required
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-[#182033] mb-1.5">
-                  Description <span className="text-xs font-normal text-[#98A2B3]">(Optional)</span>
-                </label>
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Describe what triggers this workflow and what it automates..."
-                  rows={4}
-                  maxLength={500}
-                  className="w-full px-3.5 py-2 text-sm bg-white border border-[#E9E5E4] rounded-lg text-[#182033] placeholder-[#98A2B3] focus:outline-none focus:border-[#E85D8A] focus:ring-1 focus:ring-[#E85D8A] resize-none"
-                />
-              </div>
-
-              <div className="pt-2 flex justify-end">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="sm"
-                  disabled={saving || !name.trim()}
-                  leftIcon={saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                >
-                  {saving ? 'Saving...' : 'Save Changes'}
-                </Button>
-              </div>
-            </form>
-          </div>
-
-          {/* Metadata Sidebar Column */}
-          <div className="space-y-4">
-            <div className="bg-white border border-[#E9E5E4] rounded-2xl p-5 shadow-xs space-y-3">
-              <h4 className="text-xs font-bold text-[#182033] uppercase tracking-wider mb-2">
-                Workflow Details
-              </h4>
-
-              <div className="flex items-center justify-between text-xs py-1 border-b border-[#F2F4F7]">
-                <span className="text-[#667085] flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-[#98A2B3]" />
-                  Version
-                </span>
-                <span className="font-semibold text-[#182033]">v{workflow.version}</span>
-              </div>
-
-              <div className="flex items-center justify-between text-xs py-1 border-b border-[#F2F4F7]">
-                <span className="text-[#667085] flex items-center gap-1.5">
-                  <GitBranch className="w-3.5 h-3.5 text-[#98A2B3]" />
-                  Status
-                </span>
-                <span className="font-semibold text-[#182033] capitalize">{workflow.status.toLowerCase()}</span>
-              </div>
-
-              <div className="flex items-center justify-between text-xs py-1 border-b border-[#F2F4F7]">
-                <span className="text-[#667085] flex items-center gap-1.5">
-                  <Calendar className="w-3.5 h-3.5 text-[#98A2B3]" />
-                  Created
-                </span>
-                <span className="font-medium text-[#475467]">{formatDate(workflow.createdAt)}</span>
-              </div>
-
-              <div className="flex items-center justify-between text-xs py-1">
-                <span className="text-[#667085] flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-[#98A2B3]" />
-                  Modified
-                </span>
-                <span className="font-medium text-[#475467]">{formatDate(workflow.updatedAt)}</span>
-              </div>
-            </div>
-
-            {/* Automation Steps / Canvas info */}
-            <div className="bg-[#FFFDFB] border border-[#E9E5E4] rounded-2xl p-5 shadow-xs">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="w-6 h-6 rounded-lg bg-[#F8DCE5] text-[#E85D8A] flex items-center justify-center">
-                  <GitBranch className="w-3.5 h-3.5" />
-                </div>
-                <h4 className="text-xs font-bold text-[#182033]">
-                  Workflow Nodes & Steps
-                </h4>
-              </div>
-              <p className="text-[11px] text-[#667085] leading-relaxed">
-                Workflow container initialized with {workflow.nodes?.length || 0} nodes and {workflow.connections?.length || 0} connections. Visual canvas builder connects in the next module.
-              </p>
-            </div>
+          <div className="relative z-10 w-full flex flex-col items-center">
+            {workflow.trigger ? (
+              <TriggerCanvasNode
+                trigger={workflow.trigger}
+                onClick={handleOpenExistingTrigger}
+              />
+            ) : (
+              <TriggerSelector onSelect={handleSelectTriggerType} />
+            )}
           </div>
         </div>
+
+        {/* Trigger Configuration Drawer (Slide-Over) */}
+        <TriggerDrawer
+          isOpen={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          triggerType={selectedTriggerType}
+          existingTrigger={workflow.trigger}
+          onSave={handleSaveTrigger}
+          onToggleStatus={handleToggleTriggerStatus}
+          onRemove={handleRemoveTrigger}
+        />
 
         {/* Delete Confirmation Modal */}
         <DeleteWorkflowModal

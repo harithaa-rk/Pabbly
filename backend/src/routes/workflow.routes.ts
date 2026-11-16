@@ -15,5 +15,10 @@ router.patch('/:id/status', WorkflowController.updateStatus);
 router.post('/:id/duplicate', WorkflowController.duplicate);
 router.delete('/:id', WorkflowController.delete);
 
+// Trigger routes (Module 5)
+router.put('/:id/trigger', WorkflowController.saveTrigger);
+router.patch('/:id/trigger/status', WorkflowController.updateTriggerStatus);
+router.delete('/:id/trigger', WorkflowController.removeTrigger);
+
 export default router;
 
