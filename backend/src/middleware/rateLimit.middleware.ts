@@ -33,3 +33,16 @@ export const generalLimiter = rateLimit({
   handler: rateLimitHandler,
 });
 
+export const webhookIngestLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 120, // 120 webhook payloads per minute per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (_req: Request, res: Response) => {
+    res.status(429).json({
+      success: false,
+      message: 'Too many webhook requests from this IP. Rate limit is 120 requests per minute.',
+      errors: [{ message: 'Webhook ingest rate limit exceeded (120 req/min)' }],
+    });
+  },
+});

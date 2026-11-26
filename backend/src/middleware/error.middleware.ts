@@ -20,6 +20,26 @@ export function errorHandler(
     return;
   }
 
+  // Malformed JSON / Body-Parser Syntax Error
+  if ('status' in err && (err as any).status === 400 && 'body' in err) {
+    res.status(400).json({
+      success: false,
+      message: 'Malformed JSON payload: Invalid JSON syntax',
+      errors: [{ message: err.message }],
+    });
+    return;
+  }
+
+  // Oversized Payload (Entity Too Large)
+  if ((err as any).status === 413 || (err as any).type === 'entity.too.large') {
+    res.status(413).json({
+      success: false,
+      message: 'Payload too large: Payload exceeds maximum limit (10MB)',
+      errors: [{ message: 'Payload size limit exceeded' }],
+    });
+    return;
+  }
+
   // Zod Validation Error
   if (err instanceof ZodError) {
     const formattedErrors = err.errors.map((e) => ({
@@ -56,17 +76,25 @@ export function errorHandler(
     }
   }
 
-  // MongoDB Atlas IP Whitelist / Connection Rejection
+  // Prisma Initialization, Connection & DNS Errors (e.g. MongoDB Atlas offline)
   if (
+    err instanceof Prisma.PrismaClientInitializationError ||
+    err instanceof Prisma.PrismaClientRustPanicError ||
+    err.name === 'PrismaClientInitializationError' ||
+    err.message?.includes('PrismaClientInitializationError') ||
+    err.message?.includes('DNS resolution') ||
+    err.message?.includes('Error creating a database connection') ||
     err.message?.includes('Server selection timeout') ||
     err.message?.includes('fatal alert: InternalError') ||
-    err.message?.includes('No available servers')
+    err.message?.includes('No available servers') ||
+    err.message?.includes('DATABASE_OFFLINE')
   ) {
     res.status(503).json({
       success: false,
+      code: 'DATABASE_UNAVAILABLE',
       message:
-        'MongoDB Atlas connection rejected: Your current IP address is not whitelisted in MongoDB Atlas Network Access. Please add 0.0.0.0/0 (or your current IP) in MongoDB Atlas -> Network Access.',
-      errors: [{ message: 'MongoDB Atlas IP Whitelist Required' }],
+        'Database connection unavailable: MongoDB Atlas is currently offline or unreachable. Persistent operations are temporarily paused in decoupled development mode.',
+      errors: [{ message: err.message || 'Database connection error' }],
     });
     return;
   }
@@ -88,4 +116,3 @@ export function notFoundHandler(req: Request, res: Response): void {
     errors: [],
   });
 }
-

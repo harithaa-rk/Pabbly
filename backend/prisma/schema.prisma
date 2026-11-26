@@ -37,6 +37,8 @@ model User {
   passwordResetTokens PasswordResetToken[]
   sessions            Session[]
   workflows           Workflow[]
+  taskUsage           TaskUsage?
+  workflowExecutions  WorkflowExecution[]
 
   @@index([role])
   @@index([isActive])
@@ -100,4 +102,42 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+model TaskUsage {
+  id                 String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId             String    @unique @db.ObjectId
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan               String    @default("FREE")
+  tasksAllocated     Int       @default(100)
+  tasksConsumed      Int       @default(0)
+  freeTasksConsumed  Int       @default(0)
+  billingPeriodStart DateTime  @default(now())
+  billingPeriodEnd   DateTime
+  lastResetAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@map("task_usages")
+}
+
+model WorkflowExecution {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  executionId   String   @unique
+  userId        String   @db.ObjectId
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workflowId    String
+  workflowName  String
+  status        String   // "SUCCESS" | "FAILED" | "RUNNING"
+  actionCount   Int      @default(1)
+  taskConsumed  Boolean  @default(false)
+  isTest        Boolean  @default(false)
+  failureReason String?
+  retryCount    Int      @default(0)
+  executedAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([workflowId])
+  @@index([executedAt])
+  @@map("workflow_executions")
 }

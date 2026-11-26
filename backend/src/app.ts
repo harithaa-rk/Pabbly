@@ -9,6 +9,9 @@ import authRoutes from './routes/auth.routes.js';
 import userRoutes from './routes/user.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import workflowRoutes from './routes/workflow.routes.js';
+import taskRoutes from './routes/task.routes.js';
+import webhookRoutes from './routes/webhook.routes.js';
+import connectionRoutes from './routes/connection.routes.js';
 
 export function createApp(): Express {
   const app = express();
@@ -49,6 +52,9 @@ export function createApp(): Express {
   app.use('/api/users', userRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api/workflows', workflowRoutes);
+  app.use('/api/tasks', taskRoutes);
+  app.use('/api/webhooks', webhookRoutes);
+  app.use('/api/connections', connectionRoutes);
 
   // 404 Handler
   app.use(notFoundHandler);

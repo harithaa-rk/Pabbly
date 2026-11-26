@@ -1,356 +1,682 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import Link from 'next/link';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  ArrowLeft,
-  Save,
-  Power,
-  Copy,
-  Trash2,
+  Webhook,
+  Mail,
+  X,
   GitBranch,
-  Loader2,
-  AlertCircle,
-  Check,
 } from 'lucide-react';
-import { DashboardLayout } from '../../../../components/layout/DashboardLayout';
-import { WorkflowService } from '../../../../services/workflowService';
+import { ProtectedRoute } from '../../../../components/auth/ProtectedRoute';
+import { BuilderSidebar } from '../../../../components/builder/BuilderSidebar';
+import { WorkflowEditorHeader } from '../../../../components/builder/WorkflowEditorHeader';
+import { VisualCanvas } from '../../../../components/builder/VisualCanvas';
+import { ManualBuilder } from '../../../../components/builder/ManualBuilder';
+import { WebhookConfigModal } from '../../../../components/builder/WebhookConfigModal';
+import { EmailActionConfigModal } from '../../../../components/builder/EmailActionConfigModal';
+import { ConditionConfigModal } from '../../../../components/builder/ConditionConfigModal';
+import { GmailTriggerConfigModal } from '../../../../components/builder/GmailTriggerConfigModal';
+import { GmailActionConfigModal } from '../../../../components/builder/GmailActionConfigModal';
 import {
+  useWorkflowStore,
+  BuilderMode,
   Workflow,
-  WorkflowStatus,
-  TriggerType,
-  SaveTriggerInput,
-} from '../../../../types/workflow';
-import { WorkflowStatusBadge } from '../../../../components/dashboard/WorkflowStatusBadge';
-import { DeleteWorkflowModal } from '../../../../components/dashboard/DeleteWorkflowModal';
-import { TriggerSelector } from '../../../../components/workflow/TriggerSelector';
-import { TriggerCanvasNode } from '../../../../components/workflow/TriggerCanvasNode';
-import { TriggerDrawer } from '../../../../components/workflow/TriggerDrawer';
-import { Button } from '../../../../components/ui/Button';
+  WorkflowNode,
+  createDefaultNodes,
+  createDefaultEdges,
+} from '../../../../store/workflowStore';
+import { WorkflowService } from '../../../../services/workflowService';
 import { useToast } from '../../../../hooks/useToast';
+import { LoadingSpinner } from '../../../../components/ui/LoadingSpinner';
 import { extractErrorMessage } from '../../../../lib/api';
 
-export default function WorkflowEditorPage() {
+export default function WorkflowBuilderPage() {
   const params = useParams();
   const router = useRouter();
-  const { success, error: toastError } = useToast();
+  const { success, info, error: errorToast } = useToast();
 
-  const workflowId = params.id as string;
+  const workflowId = (params?.id as string) || '';
 
-  const [workflow, setWorkflow] = useState<Workflow | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [savingName, setSavingName] = useState(false);
-  const [statusUpdating, setStatusUpdating] = useState(false);
-  const [duplicating, setDuplicating] = useState(false);
-  const [deletingModalOpen, setDeletingModalOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const {
+    workflows,
+    ensureWorkflowInitialized,
+    updateWorkflow,
+    toggleStatus,
+    setBuilderMode,
+    updateWorkflowNodes,
+    updateNodePosition,
+    addNode,
+    deleteNode,
+    updateNode,
+    duplicateNode,
+    reorderNodes,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useWorkflowStore();
 
-  // Editable workflow metadata
-  const [name, setName] = useState('');
-  const [hasNameChanged, setHasNameChanged] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+  const [isLoadingApi, setIsLoadingApi] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [showAppCatalogModal, setShowAppCatalogModal] = useState(false);
+  const [catalogTargetNodeId, setCatalogTargetNodeId] = useState<string | null>(null);
 
-  // Trigger drawer state
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedTriggerType, setSelectedTriggerType] = useState<TriggerType>('webhook');
+  // Configuration modals for Webhook, Email, Condition, and Gmail
+  const [webhookModalNode, setWebhookModalNode] = useState<WorkflowNode | null>(null);
+  const [emailModalNode, setEmailModalNode] = useState<WorkflowNode | null>(null);
+  const [conditionModalNode, setConditionModalNode] = useState<WorkflowNode | null>(null);
+  const [gmailTriggerModalNode, setGmailTriggerModalNode] = useState<WorkflowNode | null>(null);
+  const [gmailActionModalNode, setGmailActionModalNode] = useState<WorkflowNode | null>(null);
 
+  // Fetch workflow from backend API on mount
   useEffect(() => {
-    let isMounted = true;
+    setIsMounted(true);
+    let active = true;
 
-    async function loadWorkflow() {
-      setLoading(true);
-      setErrorMessage(null);
+    async function loadWorkflowFromApi() {
+      if (!workflowId) return;
       try {
-        const data = await WorkflowService.getWorkflowById(workflowId);
-        if (isMounted) {
-          setWorkflow(data);
-          setName(data.name);
-          setHasNameChanged(false);
+        const fetched = await WorkflowService.getWorkflowById(workflowId);
+        if (active && fetched) {
+          // Sync fetched workflow into store
+          const nodes = Array.isArray(fetched.nodes) && fetched.nodes.length > 0
+            ? (fetched.nodes as WorkflowNode[])
+            : createDefaultNodes();
+          const connections = Array.isArray(fetched.connections) && fetched.connections.length > 0
+            ? fetched.connections
+            : createDefaultEdges(nodes);
+
+          const store = useWorkflowStore.getState();
+          const existing = store.workflows.find((w) => w.id === workflowId);
+          if (existing) {
+            store.updateWorkflowNodes(workflowId, nodes, connections);
+          } else {
+            store.ensureWorkflowInitialized(workflowId, fetched.name);
+            store.updateWorkflowNodes(workflowId, nodes, connections);
+          }
         }
       } catch (err) {
-        if (isMounted) {
-          setErrorMessage(extractErrorMessage(err));
-        }
+        // Fall back gracefully to initialized workflow in local store
+        console.warn('API getWorkflowById fallback to local store:', err);
       } finally {
-        if (isMounted) {
-          setLoading(false);
+        if (active) {
+          setIsLoadingApi(false);
         }
       }
     }
 
-    if (workflowId) {
-      loadWorkflow();
-    }
+    loadWorkflowFromApi();
 
     return () => {
-      isMounted = false;
+      active = false;
     };
   }, [workflowId]);
 
-  // Handle saving workflow name changes
-  const handleSaveName = async () => {
-    if (!name.trim()) {
-      toastError('Workflow name cannot be empty');
+  // Ensure workflow exists and is initialized
+  const workflow: Workflow | undefined = useMemo(() => {
+    if (!workflowId || !isMounted) return undefined;
+    return ensureWorkflowInitialized(workflowId);
+  }, [workflowId, isMounted, ensureWorkflowInitialized, workflows]);
+
+  // Nodes and edges directly from shared store
+  const nodes: WorkflowNode[] = useMemo(() => {
+    if (!workflow?.nodes || workflow.nodes.length === 0) {
+      return createDefaultNodes();
+    }
+    return workflow.nodes;
+  }, [workflow?.nodes]);
+
+  const edges = useMemo(() => {
+    const rawEdges = (workflow as any)?.edges || workflow?.connections;
+    if (!rawEdges || rawEdges.length === 0) {
+      return createDefaultEdges(nodes);
+    }
+    return rawEdges;
+  }, [workflow, nodes]);
+
+  const currentMode: BuilderMode = workflow?.builderMode || 'visual';
+
+  // Handlers
+  const handleModeChange = useCallback(
+    (mode: BuilderMode) => {
+      if (!workflowId) return;
+      setBuilderMode(workflowId, mode);
+    },
+    [workflowId, setBuilderMode]
+  );
+
+  const handleNameChange = useCallback(
+    async (newName: string) => {
+      if (!workflowId || !newName.trim()) return;
+      try {
+        await updateWorkflow(workflowId, { name: newName.trim() });
+        success('Workflow renamed');
+      } catch (err) {
+        errorToast(extractErrorMessage(err) || 'Failed to rename workflow');
+      }
+    },
+    [workflowId, updateWorkflow, success, errorToast]
+  );
+
+  const handleToggleStatus = useCallback(async () => {
+    if (!workflowId) return;
+    try {
+      const permitted = await toggleStatus(workflowId);
+      if (!permitted) {
+        info('A workflow requires configured trigger and action apps before it can be activated.');
+      } else {
+        const updated = workflows.find((w) => w.id === workflowId);
+        success(`Workflow status: ${updated?.status}`);
+      }
+    } catch (err) {
+      errorToast(extractErrorMessage(err) || 'Failed to update workflow status');
+    }
+  }, [workflowId, toggleStatus, workflows, success, info, errorToast]);
+
+  const handleSave = useCallback(async () => {
+    if (!workflow) return;
+    setIsSaving(true);
+    try {
+      await updateWorkflow(workflow.id, {
+        name: workflow.name,
+        nodes,
+        connections: edges,
+      });
+      success('Workflow saved');
+    } catch (err) {
+      errorToast(extractErrorMessage(err) || 'Failed to save workflow');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [workflow, nodes, edges, updateWorkflow, success, errorToast]);
+
+  const handleTest = useCallback(() => {
+    const triggerNode = nodes.find((n) => n.type === 'trigger');
+    const conditionNode = nodes.find((n) => n.type === 'condition' || n.app === 'Condition');
+    const actionNode = nodes.find((n) => n.type === 'action');
+
+    const triggerConfigured = triggerNode?.status === 'configured';
+    const hasNextConfiguredStep =
+      (conditionNode && conditionNode.status === 'configured') ||
+      (actionNode && actionNode.status === 'configured');
+
+    if (!triggerConfigured || !hasNextConfiguredStep) {
+      info('Configure Webhook Trigger and next step (Condition or Email Action) before testing.');
       return;
     }
 
-    setSavingName(true);
-    try {
-      const updated = await WorkflowService.updateWorkflow(workflowId, {
-        name: name.trim(),
-      });
-      setWorkflow(updated);
-      setHasNameChanged(false);
-      success('Workflow name updated');
-    } catch (err: any) {
-      toastError(err?.message || 'Failed to update workflow name');
-    } finally {
-      setSavingName(false);
+    if (conditionNode) {
+      setConditionModalNode(conditionNode);
+      info('Opening Execution Engine Dry-Run panel for Condition & Email branches (0 tasks consumed).');
+    } else {
+      info('Test run completed: Sample payload mapped to Email Action. (Free test run - 0 tasks consumed).');
     }
-  };
+  }, [nodes, info]);
 
-  // Toggle workflow lifecycle status (ACTIVE / INACTIVE)
-  const handleToggleWorkflowStatus = async () => {
-    if (!workflow) return;
-    setStatusUpdating(true);
-    const nextStatus: WorkflowStatus = workflow.status === 'ACTIVE' ? 'INACTIVE' : 'ACTIVE';
-    try {
-      const updated = await WorkflowService.updateStatus(workflow.id, nextStatus);
-      setWorkflow(updated);
-      success(`Workflow is now ${nextStatus.toLowerCase()}`);
-    } catch (err: any) {
-      toastError(err?.message || 'Failed to update workflow status');
-    } finally {
-      setStatusUpdating(false);
-    }
-  };
+  const handleAddNode = useCallback(
+    (afterNodeId?: string) => {
+      if (!workflowId) return;
+      addNode(workflowId, afterNodeId);
+      success('Step added');
+    },
+    [workflowId, addNode, success]
+  );
 
-  // Duplicate workflow
-  const handleDuplicate = async () => {
-    if (!workflow) return;
-    setDuplicating(true);
-    try {
-      const duplicated = await WorkflowService.duplicateWorkflow(workflow.id);
-      success(`Workflow duplicated as "${duplicated.name}"`);
-      router.push(`/workflows/${duplicated.id}`);
-    } catch (err: any) {
-      toastError(err?.message || 'Failed to duplicate workflow');
-      setDuplicating(false);
-    }
-  };
+  const handleDeleteNode = useCallback(
+    (nodeId: string) => {
+      if (!workflowId) return;
+      deleteNode(workflowId, nodeId);
+      success('Step removed');
+    },
+    [workflowId, deleteNode, success]
+  );
 
-  // Delete workflow
-  const handleDelete = async () => {
-    if (!workflow) return;
-    setDeleting(true);
-    try {
-      await WorkflowService.deleteWorkflow(workflow.id);
-      success('Workflow deleted successfully');
-      router.push('/workflows');
-    } catch (err: any) {
-      toastError(err?.message || 'Failed to delete workflow');
-      setDeleting(false);
-      setDeletingModalOpen(false);
-    }
-  };
+  const handleSelectApp = useCallback(
+    (nodeId: string) => {
+      const target = nodes.find((n) => n.id === nodeId);
+      if (!target) return;
 
-  // Trigger operations (Module 5)
-  const handleSelectTriggerType = (type: TriggerType) => {
-    setSelectedTriggerType(type);
-    setDrawerOpen(true);
-  };
+      // If already configured, open respective configuration modal directly
+      if (target.app === 'Webhook') {
+        setWebhookModalNode(target);
+        return;
+      }
+      if (target.app === 'Gmail') {
+        if (target.type === 'trigger') {
+          setGmailTriggerModalNode(target);
+        } else {
+          setGmailActionModalNode(target);
+        }
+        return;
+      }
+      if (target.app === 'Condition' || target.type === 'condition') {
+        setConditionModalNode(target);
+        return;
+      }
+      if (target.app === 'Email') {
+        setEmailModalNode(target);
+        return;
+      }
 
-  const handleOpenExistingTrigger = () => {
-    if (workflow?.trigger) {
-      setSelectedTriggerType(workflow.trigger.type);
-      setDrawerOpen(true);
-    }
-  };
+      // Otherwise show application catalog to choose
+      setCatalogTargetNodeId(nodeId);
+      setShowAppCatalogModal(true);
+    },
+    [nodes]
+  );
 
-  const handleSaveTrigger = async (data: SaveTriggerInput) => {
-    const updated = await WorkflowService.saveTrigger(workflowId, data);
-    setWorkflow(updated);
-    success('Trigger configured and saved to database');
-  };
+  const handleDuplicateNode = useCallback(
+    (nodeId: string) => {
+      if (!workflowId) return;
+      duplicateNode(workflowId, nodeId);
+      success('Step duplicated');
+    },
+    [workflowId, duplicateNode, success]
+  );
 
-  const handleToggleTriggerStatus = async (enabled: boolean) => {
-    const updated = await WorkflowService.updateTriggerStatus(workflowId, enabled);
-    setWorkflow(updated);
-    success(`Trigger ${enabled ? 'enabled' : 'disabled'}`);
-  };
+  const handleReorderNodes = useCallback(
+    (startIndex: number, endIndex: number) => {
+      if (!workflowId) return;
+      reorderNodes(workflowId, startIndex, endIndex);
+      success('Steps reordered');
+    },
+    [workflowId, reorderNodes, success]
+  );
 
-  const handleRemoveTrigger = async () => {
-    const updated = await WorkflowService.removeTrigger(workflowId);
-    setWorkflow(updated);
-    success('Trigger removed from workflow');
-  };
+  const handleUndo = useCallback(() => {
+    if (!workflowId) return;
+    const ok = undo(workflowId);
+    if (ok) success('Action undone');
+  }, [workflowId, undo, success]);
 
-  if (loading) {
+  const handleRedo = useCallback(() => {
+    if (!workflowId) return;
+    const ok = redo(workflowId);
+    if (ok) success('Action redone');
+  }, [workflowId, redo, success]);
+
+  const handleSaveNodeConfig = useCallback(
+    (nodeId: string, updates: Partial<WorkflowNode>) => {
+      if (!workflowId) return;
+      updateNode(workflowId, nodeId, updates);
+
+      const target = nodes.find((n) => n.id === nodeId);
+      const appName = updates.app || target?.app;
+      if (appName && workflow) {
+        const currentApps = workflow.apps || [];
+        if (!currentApps.includes(appName)) {
+          updateWorkflow(workflowId, { apps: [...currentApps, appName] } as any);
+        }
+      }
+      success('Step configuration saved');
+    },
+    [workflowId, updateNode, nodes, workflow, updateWorkflow, success]
+  );
+
+  const handleUpdateNodePosition = useCallback(
+    (nodeId: string, position: { x: number; y: number }) => {
+      if (!workflowId) return;
+      updateNodePosition(workflowId, nodeId, position);
+    },
+    [workflowId, updateNodePosition]
+  );
+
+  const handleResetLayout = useCallback(() => {
+    if (!workflowId || !workflow) return;
+    // Align horizontally from left to right: Trigger on left (140), subsequent actions to right
+    const reorderedNodes = nodes.map((node, index) => ({
+      ...node,
+      position: {
+        x: 140 + index * 360,
+        y: 220,
+      },
+    }));
+    updateWorkflowNodes(workflowId, reorderedNodes);
+    success('Canvas layout aligned');
+  }, [workflowId, workflow, nodes, updateWorkflowNodes, success]);
+
+  if (!isMounted || !workflow || (isLoadingApi && !workflow.name)) {
     return (
-      <DashboardLayout>
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-[#E85D8A] mb-3" />
-          <p className="text-xs font-medium text-[#667085]">Loading workflow editor...</p>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
-  if (errorMessage || !workflow) {
-    return (
-      <DashboardLayout>
-        <div className="max-w-md mx-auto my-16 bg-white border border-[#E9E5E4] rounded-2xl p-8 text-center shadow-xs">
-          <div className="w-12 h-12 rounded-full bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-6 h-6" />
-          </div>
-          <h2 className="text-base font-bold text-[#182033] mb-1">Workflow Not Found</h2>
-          <p className="text-xs text-[#667085] mb-6">
-            {errorMessage || 'The requested workflow does not exist or you do not have permission to view it.'}
+      <ProtectedRoute>
+        <div className="h-screen w-screen flex flex-col items-center justify-center bg-[#FFFDFB]">
+          <LoadingSpinner size="lg" className="text-[#E85D8A] mb-3" />
+          <p className="text-xs font-semibold text-[#667085]">
+            Loading KAIRA Workflow Editor...
           </p>
-          <Button
-            onClick={() => router.push('/workflows')}
-            variant="primary"
-            size="sm"
-            leftIcon={<ArrowLeft className="w-4 h-4" />}
-          >
-            Back to Workflows
-          </Button>
         </div>
-      </DashboardLayout>
+      </ProtectedRoute>
     );
   }
 
   return (
-    <DashboardLayout>
-      <div className="space-y-4">
-        {/* Top Workflow Editor Navigation Bar */}
-        <div className="bg-white border border-[#E9E5E4] rounded-2xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <Link
-              href="/workflows"
-              className="p-2 rounded-xl text-[#667085] hover:text-[#182033] hover:bg-[#FFF7F4] border border-[#E9E5E4] transition-colors shrink-0"
-              title="Back to Workflows"
-            >
-              <ArrowLeft className="w-4 h-4" />
-            </Link>
+    <ProtectedRoute>
+      <div className="h-screen w-screen overflow-hidden flex flex-row bg-[#FFFDFB] text-[#182033]">
+        {/* Left Sidebar */}
+        <BuilderSidebar />
 
-            {/* Editable Workflow Name */}
-            <div className="flex items-center gap-2 min-w-0 max-w-md">
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value);
-                  setHasNameChanged(e.target.value !== workflow.name);
-                }}
-                onBlur={() => {
-                  if (hasNameChanged && name.trim()) {
-                    handleSaveName();
-                  }
-                }}
-                maxLength={100}
-                className="text-base sm:text-lg font-bold text-[#182033] bg-transparent hover:bg-[#FFFDFB] focus:bg-white border border-transparent hover:border-[#E9E5E4] focus:border-[#E85D8A] focus:outline-none rounded-lg px-2 py-1 transition-all truncate"
-                placeholder="Workflow Name"
-              />
-              {hasNameChanged && (
-                <button
-                  type="button"
-                  onClick={handleSaveName}
-                  disabled={savingName || !name.trim()}
-                  className="p-1.5 rounded-lg bg-[#E85D8A] text-white hover:bg-[#D94C79] transition-colors shrink-0"
-                  title="Save Name"
-                >
-                  {savingName ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                </button>
-              )}
-            </div>
-
-            <div className="hidden sm:flex items-center gap-2 shrink-0">
-              <WorkflowStatusBadge status={workflow.status} />
-              <span className="text-[11px] font-semibold text-[#475467] bg-[#F2F4F7] px-2 py-0.5 rounded-md">
-                v{workflow.version}
-              </span>
-            </div>
-          </div>
-
-          {/* Action Controls */}
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleToggleWorkflowStatus}
-              disabled={statusUpdating}
-              leftIcon={<Power className="w-3.5 h-3.5 text-[#E85D8A]" />}
-            >
-              {workflow.status === 'ACTIVE' ? 'Pause' : 'Activate'}
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleDuplicate}
-              disabled={duplicating}
-              leftIcon={<Copy className="w-3.5 h-3.5 text-[#667085]" />}
-            >
-              Duplicate
-            </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setDeletingModalOpen(true)}
-              className="text-red-600 hover:bg-red-50 hover:border-red-200"
-              leftIcon={<Trash2 className="w-3.5 h-3.5" />}
-            >
-              Delete
-            </Button>
-          </div>
-        </div>
-
-        {/* Workflow Editor Canvas Area */}
-        <div className="relative min-h-[580px] bg-[#FFFDFB] border border-[#E9E5E4] rounded-2xl p-6 sm:p-12 flex flex-col items-center justify-center shadow-2xs overflow-hidden">
-          {/* Subtle canvas grid pattern */}
-          <div
-            className="absolute inset-0 pointer-events-none opacity-[0.4]"
-            style={{
-              backgroundImage: 'radial-gradient(#CBD5E1 1px, transparent 1px)',
-              backgroundSize: '24px 24px',
-            }}
+        {/* Main Editor Surface */}
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+          {/* Top Toolbar */}
+          <WorkflowEditorHeader
+            workflow={workflow as any}
+            mode={currentMode}
+            onModeChange={handleModeChange}
+            onNameChange={handleNameChange}
+            onToggleStatus={handleToggleStatus}
+            onSave={handleSave}
+            onTest={handleTest}
+            onResetLayout={handleResetLayout}
+            isSaving={isSaving}
           />
 
-          <div className="relative z-10 w-full flex flex-col items-center">
-            {workflow.trigger ? (
-              <TriggerCanvasNode
-                trigger={workflow.trigger}
-                onClick={handleOpenExistingTrigger}
+          {/* Builder Canvas / Step Viewport */}
+          <main className="flex-1 min-h-0 relative overflow-hidden bg-[#FFFDFB]">
+            {currentMode === 'visual' ? (
+              <VisualCanvas
+                workflow={workflow as any}
+                nodes={nodes}
+                edges={edges}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={setSelectedNodeId}
+                onSelectApp={handleSelectApp}
+                onUpdateNodePosition={handleUpdateNodePosition}
+                onAddNode={handleAddNode}
+                onDeleteNode={handleDeleteNode}
+                onDuplicateNode={handleDuplicateNode}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                canUndo={canUndo(workflowId)}
+                canRedo={canRedo(workflowId)}
               />
             ) : (
-              <TriggerSelector onSelect={handleSelectTriggerType} />
+              <ManualBuilder
+                workflow={workflow as any}
+                nodes={nodes}
+                onAddNode={handleAddNode}
+                onDeleteNode={handleDeleteNode}
+                onSelectApp={handleSelectApp}
+                onDuplicateNode={handleDuplicateNode}
+                onReorderNodes={handleReorderNodes}
+              />
             )}
-          </div>
+          </main>
         </div>
 
-        {/* Trigger Configuration Drawer (Slide-Over) */}
-        <TriggerDrawer
-          isOpen={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          triggerType={selectedTriggerType}
-          existingTrigger={workflow.trigger}
-          onSave={handleSaveTrigger}
-          onToggleStatus={handleToggleTriggerStatus}
-          onRemove={handleRemoveTrigger}
-        />
+        {/* Application Directory Modal */}
+        {showAppCatalogModal && (() => {
+          const targetNode = nodes.find((n) => n.id === catalogTargetNodeId);
+          const isTrigger = targetNode?.type === 'trigger';
 
-        {/* Delete Confirmation Modal */}
-        <DeleteWorkflowModal
-          isOpen={deletingModalOpen}
-          workflowName={workflow.name}
-          isDeleting={deleting}
-          onConfirm={handleDelete}
-          onCancel={() => setDeletingModalOpen(false)}
-        />
+          return (
+            <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-2xl border border-[#E9E5E4] shadow-xl max-w-md w-full p-5 space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-[#F0ECE9]">
+                  <div>
+                    <h3 className="text-sm font-bold text-[#182033]">
+                      Choose {isTrigger ? 'Trigger Application' : 'Action Application'}
+                    </h3>
+                    <p className="text-[11px] text-[#667085]">
+                      Select a supported integration to power step {targetNode?.stepNumber || 1}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAppCatalogModal(false)}
+                    className="p-1 rounded-lg text-[#98A2B3] hover:text-[#182033] hover:bg-[#FFF7F4]"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Available & Ready Apps */}
+                <div className="space-y-2">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-[#667085]">
+                    Available Integrations
+                  </span>
+                  {isTrigger ? (
+                    <div className="space-y-2">
+                      {/* Webhook Trigger */}
+                      <div
+                        onClick={() => {
+                          setShowAppCatalogModal(false);
+                          if (targetNode) setWebhookModalNode(targetNode);
+                        }}
+                        className="p-3 rounded-xl border border-[#E85D8A] bg-[#FFF0F5]/50 flex items-center justify-between hover:bg-[#FFF0F5] cursor-pointer transition-colors shadow-2xs group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-white border border-[#E85D8A]/30 text-[#E85D8A] flex items-center justify-center shrink-0 shadow-2xs">
+                            <Webhook className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#182033] block group-hover:text-[#E85D8A] transition-colors">
+                              Webhook
+                            </span>
+                            <span className="text-[11px] text-[#667085] block">
+                              Catch Hook (Instant trigger from HTTP POST)
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF7F0] text-[#22A06B] border border-[#22A06B]/20 shrink-0">
+                          Active
+                        </span>
+                      </div>
+
+                      {/* Gmail Trigger */}
+                      <div
+                        onClick={() => {
+                          setShowAppCatalogModal(false);
+                          if (targetNode) {
+                            const updated: WorkflowNode = {
+                              ...targetNode,
+                              app: 'Gmail',
+                              title: 'Gmail Trigger',
+                            };
+                            updateNode(workflowId, targetNode.id, { app: 'Gmail', title: 'Gmail Trigger' });
+                            setGmailTriggerModalNode(updated);
+                          }
+                        }}
+                        className="p-3 rounded-xl border border-[#EA4335] bg-[#FEECEB]/40 flex items-center justify-between hover:bg-[#FEECEB] cursor-pointer transition-colors shadow-2xs group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-white border border-[#EA4335]/30 text-[#EA4335] flex items-center justify-center shrink-0 shadow-2xs">
+                            <Mail className="w-5 h-5 text-[#EA4335]" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#182033] block group-hover:text-[#EA4335] transition-colors">
+                              Gmail
+                            </span>
+                            <span className="text-[11px] text-[#667085] block">
+                              New Email, Search Filter, or Specific Sender
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF7F0] text-[#22A06B] border border-[#22A06B]/20 shrink-0">
+                          Active
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* Condition / Router Option */}
+                      <div
+                        onClick={() => {
+                          setShowAppCatalogModal(false);
+                          if (targetNode) {
+                            const conditionNode: WorkflowNode = {
+                              ...targetNode,
+                              type: 'condition',
+                              app: 'Condition',
+                              title: 'Condition (Router)',
+                              event: 'Route by Field Rules',
+                            };
+                            updateNode(workflowId, targetNode.id, {
+                              type: 'condition',
+                              app: 'Condition',
+                              title: 'Condition (Router)',
+                              event: 'Route by Field Rules',
+                            });
+                            setConditionModalNode(conditionNode);
+                          }
+                        }}
+                        className="p-3 rounded-xl border border-[#22A06B] bg-[#F0FDF4]/50 flex items-center justify-between hover:bg-[#F0FDF4] cursor-pointer transition-colors shadow-2xs group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-white border border-[#22A06B]/30 text-[#22A06B] flex items-center justify-center shrink-0 shadow-2xs">
+                            <GitBranch className="w-5 h-5 text-[#22A06B]" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#182033] block group-hover:text-[#22A06B] transition-colors">
+                              Condition (Router / Branching)
+                            </span>
+                            <span className="text-[11px] text-[#667085] block">
+                              Split flow dynamically into branches based on payload fields
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF7F0] text-[#22A06B] border border-[#22A06B]/20 shrink-0">
+                          Active
+                        </span>
+                      </div>
+
+                      {/* Gmail Action Option */}
+                      <div
+                        onClick={() => {
+                          setShowAppCatalogModal(false);
+                          if (targetNode) {
+                            const updated: WorkflowNode = {
+                              ...targetNode,
+                              app: 'Gmail',
+                              title: 'Gmail Action',
+                            };
+                            updateNode(workflowId, targetNode.id, { app: 'Gmail', title: 'Gmail Action' });
+                            setGmailActionModalNode(updated);
+                          }
+                        }}
+                        className="p-3 rounded-xl border border-[#EA4335] bg-[#FEECEB]/40 flex items-center justify-between hover:bg-[#FEECEB] cursor-pointer transition-colors shadow-2xs group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-white border border-[#EA4335]/30 text-[#EA4335] flex items-center justify-center shrink-0 shadow-2xs">
+                            <Mail className="w-5 h-5 text-[#EA4335]" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#182033] block group-hover:text-[#EA4335] transition-colors">
+                              Gmail (API Action)
+                            </span>
+                            <span className="text-[11px] text-[#667085] block">
+                              Send Email, Reply to Thread, or Reply All via Gmail API
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF7F0] text-[#22A06B] border border-[#22A06B]/20 shrink-0">
+                          Active
+                        </span>
+                      </div>
+
+                      {/* SMTP Email Option */}
+                      <div
+                        onClick={() => {
+                          setShowAppCatalogModal(false);
+                          if (targetNode) setEmailModalNode(targetNode);
+                        }}
+                        className="p-3 rounded-xl border border-[#3B66DE] bg-[#F0F4FE]/50 flex items-center justify-between hover:bg-[#F0F4FE] cursor-pointer transition-colors shadow-2xs group"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-lg bg-white border border-[#3B66DE]/30 text-[#3B66DE] flex items-center justify-center shrink-0 shadow-2xs">
+                            <Mail className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <span className="text-xs font-bold text-[#182033] block group-hover:text-[#3B66DE] transition-colors">
+                              Email (SMTP Mailer)
+                            </span>
+                            <span className="text-[11px] text-[#667085] block">
+                              Send notifications using custom SMTP host & credentials
+                            </span>
+                          </div>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EAF7F0] text-[#22A06B] border border-[#22A06B]/20 shrink-0">
+                          Active
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="pt-2 flex justify-end border-t border-[#F0ECE9]">
+                  <button
+                    type="button"
+                    onClick={() => setShowAppCatalogModal(false)}
+                    className="px-3.5 py-1.5 rounded-lg bg-[#182033] hover:bg-[#E85D8A] text-white text-xs font-semibold transition-colors"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* Webhook Configuration Modal */}
+        {webhookModalNode && (
+          <WebhookConfigModal
+            isOpen={Boolean(webhookModalNode)}
+            onClose={() => setWebhookModalNode(null)}
+            workflowId={workflow.id}
+            node={webhookModalNode}
+            onSave={handleSaveNodeConfig}
+          />
+        )}
+
+        {/* Gmail Trigger Configuration Modal */}
+        {gmailTriggerModalNode && (
+          <GmailTriggerConfigModal
+            isOpen={Boolean(gmailTriggerModalNode)}
+            onClose={() => setGmailTriggerModalNode(null)}
+            workflowId={workflow.id}
+            node={gmailTriggerModalNode}
+            onSave={handleSaveNodeConfig}
+          />
+        )}
+
+        {/* Condition Configuration Modal */}
+        {conditionModalNode && (
+          <ConditionConfigModal
+            isOpen={Boolean(conditionModalNode)}
+            onClose={() => setConditionModalNode(null)}
+            workflowId={workflow.id}
+            workflowName={workflow.name}
+            node={conditionModalNode}
+            triggerNode={nodes.find((n) => n.type === 'trigger')}
+            onSave={handleSaveNodeConfig}
+          />
+        )}
+
+        {/* Gmail Action Configuration Modal */}
+        {gmailActionModalNode && (
+          <GmailActionConfigModal
+            isOpen={Boolean(gmailActionModalNode)}
+            onClose={() => setGmailActionModalNode(null)}
+            workflowId={workflow.id}
+            node={gmailActionModalNode}
+            triggerNode={nodes.find((n) => n.type === 'trigger')}
+            onSave={handleSaveNodeConfig}
+          />
+        )}
+
+        {/* Email (SMTP) Action Configuration Modal */}
+        {emailModalNode && (
+          <EmailActionConfigModal
+            isOpen={Boolean(emailModalNode)}
+            onClose={() => setEmailModalNode(null)}
+            workflowId={workflow.id}
+            node={emailModalNode}
+            triggerNode={nodes.find((n) => n.type === 'trigger')}
+            onSave={handleSaveNodeConfig}
+          />
+        )}
       </div>
-    </DashboardLayout>
+    </ProtectedRoute>
   );
 }
